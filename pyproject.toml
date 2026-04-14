@@ -9,5 +9,7 @@ dependencies = [
     "gcsfs>=2026.2.0",
     "google-cloud-storage>=3.10.1",
     "ipykernel==6.29.5",
+    "matplotlib>=3.10.8",
     "pandas>=3.0.2",
+    "seaborn>=0.13.2",
 ]

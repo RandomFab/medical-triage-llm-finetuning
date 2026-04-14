@@ -79,3 +79,45 @@ def drop_duplicates(df, subset=None):
     logger.info(f"Successfully removed {len(df) - len(result)} duplicate row(s)")
     
     return result
+
+def transform_correct_answers_to_text(df: pd.DataFrame, match_answer_dict: dict) -> pd.DataFrame:
+    """
+    Transform the 'correct_answers' column from indices to text.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the 'correct_answers' column.
+    match_answer_dict (dict): A dictionary mapping answer indices to their corresponding text.
+
+    Returns:
+    pd.DataFrame: The DataFrame with a new 'correct_answer_text' column.
+    """
+    logger.debug("Mapping correct answer indices to text")
+    df["correct_answer_text"] = df["correct_answers"].map(match_answer_dict)
+    
+    # Check for unmapped values
+    unmapped_count = df["correct_answer_text"].isna().sum()
+    if unmapped_count > 0:
+        logger.warning(f"Found {unmapped_count} unmapped answer index values")
+    
+    logger.debug(f"Successfully mapped {len(df) - unmapped_count} answer indices")
+    return df
+
+
+def create_ground_truth_answer_column(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a new column 'answer' that contains the text of the correct answer.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the 'correct_answer_text' column.
+
+    Returns:
+    pd.DataFrame: The DataFrame with a new 'answer' column.
+    """
+    logger.debug("Creating ground truth answer column")
+    try:
+        df["answer"] = df.apply(lambda row: row[row["correct_answer_text"]], axis=1)
+        logger.debug(f"Successfully created 'answer' column for {len(df)} rows")
+    except Exception as e:
+        logger.error(f"Error creating ground truth answer column: {str(e)}", exc_info=True)
+        raise
+    return df
