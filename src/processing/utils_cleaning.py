@@ -1,5 +1,5 @@
 import pandas as pd
-from ...config import logger
+from config.logger import logger
 
 
 def drop_columns(df, columns_to_drop):

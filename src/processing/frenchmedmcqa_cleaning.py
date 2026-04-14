@@ -1,6 +1,6 @@
-from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates,transform_correct_answers_to_text,create_ground_truth_answer_column
+from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
 import pandas as pd
-from ...config import logger
+from config.logger import logger
 
 MATCH_ANSWER_DICT = {
     0: "answer_a",
