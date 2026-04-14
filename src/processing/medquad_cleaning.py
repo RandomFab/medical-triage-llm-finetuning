@@ -3,6 +3,7 @@ from json import load
 from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
 import pandas as pd
 from config.logger import logger
+
 # === Main cleaning function ===
 
 def clean_medquad(df: pd.DataFrame) -> pd.DataFrame:
