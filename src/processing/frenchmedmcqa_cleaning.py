@@ -29,21 +29,26 @@ def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Starting FrenchMedMCQA cleaning process")
     logger.debug(f"Input DataFrame shape: {df.shape}")
-    
-    # Step 1: Drop unnecessary columns
-    logger.debug("Step 1: Dropping unnecessary columns")
+    logger.debug("Step 1: Dropping duplicates")
+    df = drop_duplicates(df)
+    # Step 2: Drop unnecessary columns
+    logger.debug("Step 2: Dropping unnecessary columns")
     df = drop_columns(df, ["id", "number_correct_answers"])
 
-    # Step 2: Map correct answer indices to their corresponding answer text
-    logger.debug("Step 2: Transforming correct answers to text")
+    # Step 3: Map correct answer indices to their corresponding answer text
+    logger.debug("Step 3: Transforming correct answers to text")
     df = transform_correct_answers_to_text(df)
     df = create_ground_truth_answer_column(df)
 
-    # Step 3: Create a new DataFrame with only 'question' and 'answer' columns
-    logger.debug("Step 3: Selecting final columns")
+    # Step 4: Create a new DataFrame with only 'question' and 'answer' columns
+    logger.debug("Step 4: Selecting final columns")
     df_cleaned = df.loc[:, ["question", "answer"]]
     logger.info(f"FrenchMedMCQA cleaning completed. Output shape: {df_cleaned.shape}")
 
+    # Step 5: Drop duplicates in the cleaned DataFrame
+    logger.debug("Step 5: Dropping duplicates")
+    df_cleaned = drop_duplicates(df_cleaned)
+    
     return df_cleaned
 
 # === Helper functions ===
@@ -97,6 +102,5 @@ if __name__ == "__main__":
     # Iterate over splits (train, validation, test)
     for split_name, dataset in datasets.items():
         df = dataset.to_pandas()
-        df = drop_duplicates(df, subset=['question'])
         df_cleaned = clean_frenchmedmcqa(df)
         save_cleaned_data_to_gcs(df_cleaned, "p14-medical-data", f"processed_data/frenchmedmcqa_dataset/frenchmedmcqa_{split_name}.parquet")
