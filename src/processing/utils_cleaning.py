@@ -39,3 +39,17 @@ def save_cleaned_data_to_gcs(df: pd.DataFrame, bucket_name: str, destination_blo
     parquet_buffer = io.BytesIO()
     df.to_parquet(parquet_buffer, index=False)
     blob.upload_from_string(parquet_buffer.getvalue(), content_type='application/octet-stream')
+
+def drop_duplicates(df, subset=None):
+    """
+    Drop duplicate rows from the DataFrame.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame.
+    subset (list, optional): List of column names to consider for identifying duplicates. 
+                             If None, considers all columns.
+
+    Returns:
+    pd.DataFrame: DataFrame with duplicate rows dropped.
+    """
+    return df.drop_duplicates(subset=subset)

@@ -1,4 +1,4 @@
-from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs
+from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates
 import pandas as pd
 MATCH_ANSWER_DICT = {
     0: "answer_a",
@@ -72,5 +72,6 @@ if __name__ == "__main__":
     # Iterate over splits (train, validation, test)
     for split_name, dataset in datasets.items():
         df = dataset.to_pandas()
+        df = drop_duplicates(df, subset=['question'])
         df_cleaned = clean_frenchmedmcqa(df)
         save_cleaned_data_to_gcs(df_cleaned, "p14-medical-data", f"processed_data/frenchmedmcqa_dataset/frenchmedmcqa_{split_name}.parquet")
