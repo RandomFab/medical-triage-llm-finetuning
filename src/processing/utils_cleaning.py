@@ -1,5 +1,28 @@
+from pathlib import Path
+
 import pandas as pd
 from config.logger import logger
+
+
+def save_cleaned_data_local(df: pd.DataFrame, destination_path: str | Path) -> None:
+    """
+    Save the cleaned DataFrame as a Parquet file on the local filesystem.
+
+    The parent directory is created if it does not exist. DVC is expected to
+    track the output and sync it to the configured remote.
+
+    Parameters:
+    df (pd.DataFrame): The cleaned DataFrame to be saved.
+    destination_path (str | Path): Local path of the output Parquet file.
+    """
+    destination_path = Path(destination_path)
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Saving cleaned data locally to: {destination_path}")
+    logger.debug(f"DataFrame shape: {df.shape}")
+    df.to_parquet(destination_path, index=False)
+    size_mb = destination_path.stat().st_size / (1024 * 1024)
+    logger.info(f"Successfully wrote {size_mb:.2f} MB to {destination_path}")
 
 
 def drop_columns(df, columns_to_drop):
