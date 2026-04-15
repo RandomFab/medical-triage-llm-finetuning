@@ -61,7 +61,7 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
 def drop_clinical_cases(df):
     """Keep only rows where clinical_case column is not null."""
     logger.debug(f"drop_clinical_cases: Input shape {df.shape}")
-    df_filtered = df[df["clinical_case"].notna()]
+    df_filtered = df[df["clinical_case"].isna()]
     logger.debug(f"drop_clinical_cases: Output shape {df_filtered.shape} ({len(df) - len(df_filtered)} rows removed)")
     return df_filtered
 
