@@ -85,8 +85,10 @@ def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import pandas as pd
     from datasets import load_from_disk
+    from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
+
+    datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/UltraMedical_dataset")
 
     df = merge_raw_data_splits(datasets)
     df_cleaned = clean_ultramed(df)

@@ -84,7 +84,6 @@ def drop_clinical_cases(df):
 
 
 if __name__ == "__main__":
-    import pandas as pd
     from datasets import load_from_disk
     from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
 

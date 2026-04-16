@@ -1,5 +1,3 @@
-from json import load
-
 from .utils_cleaning import (
     drop_columns,
     merge_raw_data_splits,
@@ -52,6 +50,7 @@ def clean_medquad(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     from datasets import load_from_disk
+    from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
 
     datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/MedQuad_dataset")
     
