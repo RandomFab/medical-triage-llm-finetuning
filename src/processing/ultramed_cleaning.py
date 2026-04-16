@@ -43,6 +43,11 @@ def clean_ultramed(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+def extract_qa(row):
+    chosen = row.get("chosen", [])
+    question = next((m["content"] for m in chosen if m["role"] == "user"), None)
+    answer = next((m["content"] for m in chosen if m["role"] == "assistant"), None)
+    return pd.Series({"question": question, "answer": answer})
 
 def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -59,23 +64,7 @@ def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
     questions = []
     answers = []
 
-    # Iterate through each row in the DataFrame
-    for index, row in df.iterrows():
-        conversation = row[
-            "chosen"
-        ]  # Assuming 'chosen' column contains the conversation
-        if (
-            len(conversation) >= 2
-        ):  # Ensure there are at least two messages (question and answer)
-            user_msgs = [
-                msg["content"] for msg in conversation if msg["role"] == "user"
-            ]
-            assistant_msgs = [
-                msg["content"] for msg in conversation if msg["role"] == "assistant"
-            ]
-            if user_msgs and assistant_msgs:
-                questions.append(user_msgs[0])
-                answers.append(assistant_msgs[0])
+    result = df.apply(extract_qa, axis=1)
 
     # Create a new DataFrame with 'question' and 'answer' columns
     qa_df = pd.DataFrame({"question": questions, "answer": answers})

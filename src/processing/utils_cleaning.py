@@ -172,7 +172,7 @@ def merge_raw_data_splits(datasets) -> pd.DataFrame:
 
     merged_df = pd.DataFrame()
 
-    for dataset in datasets.items():
+    for dataset in datasets:
         df = dataset.to_pandas()
         merged_df = pd.concat([merged_df, df], ignore_index=True)
 
