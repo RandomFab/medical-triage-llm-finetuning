@@ -1,4 +1,11 @@
-from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
+from .utils_cleaning import (
+    drop_columns,
+    merge_raw_data_splits,
+    save_cleaned_data_local,
+    drop_duplicates,
+    transform_correct_answers_to_text,
+    create_ground_truth_answer_column,
+)
 import pandas as pd
 from config.logger import logger
 
@@ -11,6 +18,7 @@ MATCH_ANSWER_DICT = {
 }
 
 # === Main cleaning function ===
+
 
 def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -38,7 +46,9 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
 
     # Step 3: Drop unnecessary columns
     logger.debug("Step 3: Dropping unnecessary columns")
-    df = drop_columns(df, ["id", "task", "clinical_case","medical_subject","question_type"])
+    df = drop_columns(
+        df, ["id", "task", "clinical_case", "medical_subject", "question_type"]
+    )
 
     # Step 4: Map correct answer indices to their corresponding answer text
     logger.debug("Step 4: Transforming correct answers to text")
@@ -54,25 +64,37 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
     initial_clean_shape = df_cleaned.shape[0]
     df_cleaned = drop_duplicates(df_cleaned)
 
+    # Step 7: Add dataset name column
+    logger.debug("Step 7: Adding dataset name column")
+    df_cleaned["dataset_name"] = "mediqal"
+
     logger.info(f"MedIQAL cleaning completed. Output shape: {df_cleaned.shape}")
     return df_cleaned
+
 
 # === Helper functions ===
 def drop_clinical_cases(df):
     """Keep only rows where clinical_case column is not null."""
     logger.debug(f"drop_clinical_cases: Input shape {df.shape}")
     df_filtered = df[df["clinical_case"].isna()]
-    logger.debug(f"drop_clinical_cases: Output shape {df_filtered.shape} ({len(df) - len(df_filtered)} rows removed)")
+    logger.debug(
+        f"drop_clinical_cases: Output shape {df_filtered.shape} ({len(df) - len(df_filtered)} rows removed)"
+    )
     return df_filtered
+
 
 if __name__ == "__main__":
     import pandas as pd
     from datasets import load_from_disk
-    # Load the dataset
-    datasets = load_from_disk("gs://p14-medical-data/raw_data/mediqal_datasets/mcqu_medical/")
+    from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
+
+    datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/mediqal_datasets/mcqu_medical/")
     
-    # Iterate over splits (train, validation, test)
-    for split_name, dataset in datasets.items():
-        df = dataset.to_pandas()
-        df_cleaned = clean_mediqal(df)
-        save_cleaned_data_to_gcs(df_cleaned, "p14-medical-data", f"processed_data/mediqal_dataset/mediqal_{split_name}.parquet")
+    df = merge_raw_data_splits(datasets)
+    df_cleaned = clean_mediqal(df)
+    save_cleaned_data_local(
+        df_cleaned,
+        PROCESSED_DATA_DIR
+        / "mediqal_dataset"
+        / f"mediqal.parquet",
+    )
