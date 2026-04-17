@@ -40,20 +40,21 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("Step 1: Dropping duplicates")
     df = drop_duplicates(df)
 
-    # Step 2: Drop clinical cases lines
-    logger.debug("Step 2: Dropping clinical cases lines")
-    df = drop_clinical_cases(df)
 
-    # Step 3: Drop unnecessary columns
-    logger.debug("Step 3: Dropping unnecessary columns")
+    # Step 2: Drop unnecessary columns
+    logger.debug("Step 2: Dropping unnecessary columns")
     df = drop_columns(
-        df, ["id", "task", "clinical_case", "medical_subject", "question_type"]
+        df, ["id", "task", "medical_subject", "question_type"]
     )
 
-    # Step 4: Map correct answer indices to their corresponding answer text
-    logger.debug("Step 4: Transforming correct answers to text")
+    # Step 3: Map correct answer indices to their corresponding answer text
+    logger.debug("Step 3: Transforming correct answers to text")
     df = transform_correct_answers_to_text(df, MATCH_ANSWER_DICT)
     df = create_ground_truth_answer_column(df)
+
+    # Step 4: Merge clinical case and question columns
+    logger.debug("Step 4: Merging clinical case and question columns")
+    df = merge_clinical_case_and_question(df)
 
     # Step 5: Create a new DataFrame with only 'question' and 'answer' columns
     logger.debug("Step 5: Selecting final columns")
@@ -61,11 +62,27 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
 
     # Step 6: Drop duplicates in the cleaned DataFrame
     logger.debug("Step 6: Dropping duplicates in final dataset")
-    initial_clean_shape = df_cleaned.shape[0]
     df_cleaned = drop_duplicates(df_cleaned)
 
-    # Step 7: Add dataset name column
-    logger.debug("Step 7: Adding dataset name column")
+    # Step 7: Erase non-essential text from questions
+    logger.debug("Step 7: Erasing non-essential text from questions")
+    df_cleaned = erase_non_essential_text_(df_cleaned)
+
+    # Step 8: Drop questions that ask for false answers
+    logger.debug("Step 8: Dropping questions that ask for false answers")
+    df_cleaned = drop_question_with_false_answers_asked(df_cleaned)
+
+    # Step 9: Drop questions with numbered proposals in the question body
+    logger.debug("Step 9: Dropping questions with numbered proposals")
+    df_cleaned = drop_questions_with_numbered_proposals(df_cleaned)
+
+    # Step 10: lower case text
+    logger.debug("Step 10: Lowercasing text")
+    df_cleaned["question"] = df_cleaned["question"].str.lower()
+    df_cleaned["answer"] = df_cleaned["answer"].str.lower()
+
+    # Step 11: Add dataset name column
+    logger.debug("Step 11: Adding dataset name column")
     df_cleaned["dataset_name"] = "mediqal"
 
     logger.info(f"MedIQAL cleaning completed. Output shape: {df_cleaned.shape}")
@@ -73,16 +90,70 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # === Helper functions ===
-def drop_clinical_cases(df):
-    """Keep only rows where clinical_case column is not null."""
-    logger.debug(f"drop_clinical_cases: Input shape {df.shape}")
-    df_filtered = df[df["clinical_case"].isna()]
-    logger.debug(
-        f"drop_clinical_cases: Output shape {df_filtered.shape} ({len(df) - len(df_filtered)} rows removed)"
+
+def merge_clinical_case_and_question(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge the 'clinical_case' and 'question' columns into a single 'question' column.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the MedIQAL dataset.
+
+    Returns:
+    pd.DataFrame: A DataFrame with the merged 'question' column.
+    """
+    logger.debug("Merging 'clinical_case' and 'question' columns")
+    df["question"] = df["clinical_case"] + " " + df["question"]
+    return df
+
+def erase_non_essential_text_(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Erase non-essential text from the 'question' column, such as instructions or formatting.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the MedIQAL dataset.
+
+    Returns:
+    pd.DataFrame: A DataFrame with cleaned 'question' text.
+    """
+    logger.debug("Erasing non-essential text from 'question' column")
+
+    df["question"] = df["question"].str.replace("(cochez la réponse juste)", "")
+    return df
+
+def drop_questions_with_numbered_proposals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop rows where the question contains numbered proposals (e.g. "1. ", "1) ", "1- ")
+    AND the answer is a combination of numbers (e.g. "1+2+3" or "1 3 5").
+    These patterns are unsuitable for training as the model would need to output
+    a list of indices rather than a proper textual answer.
+    """
+    logger.debug("Dropping questions with numbered proposals and indexed answers")
+    question_has_proposals = df["question"].str.contains(
+        r"\n\s*\d+[.\-\)]\s+\S", regex=True
     )
-    return df_filtered
+    answer_is_indices = df["answer"].str.contains(
+        r"^\s*\d+(\s*[+\s]\s*\d+)+\s*$", regex=True
+    )
+    mask = question_has_proposals & answer_is_indices
+    n_dropped = mask.sum()
+    logger.debug(f"Dropping {n_dropped} rows with numbered proposals")
+    return df[~mask]
 
 
+def drop_question_with_false_answers_asked(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop rows where the question asks for false answers, as they may not be suitable for training.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the MedIQAL dataset.
+
+    Returns:
+    pd.DataFrame: A DataFrame with rows containing false answer questions removed.
+    """
+    logger.debug("Dropping questions that ask for false answers")
+    mask = df["question"].str.contains("cochez la réponse fausse", case=False)
+    df = df[~mask]
+    return df
 if __name__ == "__main__":
     from datasets import load_from_disk
     from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
