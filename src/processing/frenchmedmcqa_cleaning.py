@@ -61,8 +61,13 @@ def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("Step 6: Dropping duplicates")
     df_cleaned = drop_duplicates(df_cleaned)
 
-    # Step 7: Add dataset name column
-    logger.debug("Step 7: Adding dataset name column")
+    # Step 7: lower case text
+    logger.debug("Step 7: Lowercasing text")
+    df_cleaned["question"] = df_cleaned["question"].str.lower()
+    df_cleaned["answer"] = df_cleaned["answer"].str.lower()
+
+    # Step 8: Add dataset name column
+    logger.debug("Step 8: Adding dataset name column")
     df_cleaned["dataset_name"] = "frenchmedmcqa"
 
     logger.info(f"FrenchMedMCQA cleaning completed. Output shape: {df_cleaned.shape}")
