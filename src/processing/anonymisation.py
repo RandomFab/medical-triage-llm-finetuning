@@ -16,6 +16,9 @@ nlp_configuration = {
         {"lang_code": "fr", "model_name": "fr_core_news_md"},
         {"lang_code": "en", "model_name": "en_core_web_md"},
     ],
+        "ner_model_configuration": {
+        "labels_to_ignore": ["CARDINAL", "QUANTITY", "MISC", "ORDINAL"]
+        }
 }
 provider = NlpEngineProvider(nlp_configuration=nlp_configuration)
 nlp_engine = provider.create_engine()
