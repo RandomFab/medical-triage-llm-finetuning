@@ -1,5 +1,6 @@
 from .utils_cleaning import (
     drop_columns,
+    merge_raw_data_splits,
     save_cleaned_data_local,
     drop_duplicates,
     transform_correct_answers_to_text,
@@ -36,8 +37,17 @@ def clean_ultramed(df: pd.DataFrame) -> pd.DataFrame:
     df = drop_duplicates(df)
     logger.info(f"UltraMedical cleaning completed. Output shape: {df.shape}")
 
+    # Step 3: Add dataset name column
+    logger.debug("Step 3: Adding dataset name column")
+    df["dataset_name"] = "ultramed"
+
     return df
 
+def extract_qa(row):
+    chosen = row.get("chosen", [])
+    question = next((m["content"] for m in chosen if m["role"] == "user"), None)
+    answer = next((m["content"] for m in chosen if m["role"] == "assistant"), None)
+    return pd.Series({"question": question, "answer": answer})
 
 def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -51,29 +61,7 @@ def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Transforming UltraMedical dataset to question-answer format")
 
-    questions = []
-    answers = []
-
-    # Iterate through each row in the DataFrame
-    for index, row in df.iterrows():
-        conversation = row[
-            "chosen"
-        ]  # Assuming 'chosen' column contains the conversation
-        if (
-            len(conversation) >= 2
-        ):  # Ensure there are at least two messages (question and answer)
-            user_msgs = [
-                msg["content"] for msg in conversation if msg["role"] == "user"
-            ]
-            assistant_msgs = [
-                msg["content"] for msg in conversation if msg["role"] == "assistant"
-            ]
-            if user_msgs and assistant_msgs:
-                questions.append(user_msgs[0])
-                answers.append(assistant_msgs[0])
-
-    # Create a new DataFrame with 'question' and 'answer' columns
-    qa_df = pd.DataFrame({"question": questions, "answer": answers})
+    qa_df = df.apply(extract_qa, axis=1)
 
     logger.info(f"Transformation completed. Output shape: {qa_df.shape}")
     return qa_df
@@ -85,10 +73,11 @@ if __name__ == "__main__":
 
     datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/UltraMedical_dataset")
 
-    for split_name, dataset in datasets.items():
-        df = dataset.to_pandas()
-        df_cleaned = clean_ultramed(df)
-        save_cleaned_data_local(
-            df_cleaned,
-            PROCESSED_DATA_DIR / "ultramed_dataset" / f"ultramed_{split_name}.parquet",
-        )
+    df = merge_raw_data_splits(datasets)
+    df_cleaned = clean_ultramed(df)
+    save_cleaned_data_local(
+        df_cleaned,
+        PROCESSED_DATA_DIR
+        / "ultramed_dataset"
+        / f"ultramed.parquet",
+    )

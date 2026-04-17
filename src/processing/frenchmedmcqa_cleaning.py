@@ -1,4 +1,11 @@
-from .utils_cleaning import drop_columns, save_cleaned_data_local, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
+from .utils_cleaning import (
+    drop_columns,
+    save_cleaned_data_local,
+    drop_duplicates,
+    transform_correct_answers_to_text,
+    create_ground_truth_answer_column,
+    merge_raw_data_splits,
+)
 import pandas as pd
 from config.logger import logger
 
@@ -11,6 +18,7 @@ MATCH_ANSWER_DICT = {
 }
 
 # === Main cleaning function ===
+
 
 def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -46,8 +54,13 @@ def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("Step 5: Dropping duplicates")
     df_cleaned = drop_duplicates(df_cleaned)
 
+    # Step 6: Add dataset name column
+    logger.debug("Step 6: Adding dataset name column")
+    df_cleaned["dataset_name"] = "frenchmedmcqa"
+
     logger.info(f"FrenchMedMCQA cleaning completed. Output shape: {df_cleaned.shape}")
     return df_cleaned
+
 
 # === Helper functions ===
 
@@ -58,10 +71,11 @@ if __name__ == "__main__":
 
     datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/frenchmedmcqa_dataset/")
 
-    for split_name, dataset in datasets.items():
-        df = dataset.to_pandas()
-        df_cleaned = clean_frenchmedmcqa(df)
-        save_cleaned_data_local(
-            df_cleaned,
-            PROCESSED_DATA_DIR / "frenchmedmcqa_dataset" / f"frenchmedmcqa_{split_name}.parquet",
-        )
+    df = merge_raw_data_splits(datasets)
+    df_cleaned = clean_frenchmedmcqa(df)
+    save_cleaned_data_local(
+        df_cleaned,
+        PROCESSED_DATA_DIR
+        / "frenchmedmcqa_dataset"
+        / f"frenchmedmcqa.parquet",
+    )
