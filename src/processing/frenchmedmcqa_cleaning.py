@@ -35,27 +35,34 @@ def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Starting FrenchMedMCQA cleaning process")
     logger.debug(f"Input DataFrame shape: {df.shape}")
-    logger.debug("Step 1: Dropping duplicates")
+
+    # step 1: Drop rows with false answers and duplicates
+    logger.debug("Step 1: Dropping rows with false answers")
+    df = drop_false_answers(df)
+
+    # step 2: Drop duplicates
+    logger.debug("Step 2: Dropping duplicates")
     df = drop_duplicates(df)
-    # Step 2: Drop unnecessary columns
-    logger.debug("Step 2: Dropping unnecessary columns")
+    
+    # Step 3: Drop unnecessary columns
+    logger.debug("Step 3: Dropping unnecessary columns")
     df = drop_columns(df, ["id", "number_correct_answers"])
 
-    # Step 3: Map correct answer indices to their corresponding answer text
-    logger.debug("Step 3: Transforming correct answers to text")
+    # Step 4: Map correct answer indices to their corresponding answer text
+    logger.debug("Step 4: Transforming correct answers to text")
     df = transform_correct_answers_to_text(df, MATCH_ANSWER_DICT)
     df = create_ground_truth_answer_column(df)
 
-    # Step 4: Create a new DataFrame with only 'question' and 'answer' columns
-    logger.debug("Step 4: Selecting final columns")
+    # Step 5: Create a new DataFrame with only 'question' and 'answer' columns
+    logger.debug("Step 5: Selecting final columns")
     df_cleaned = df.loc[:, ["question", "answer"]]
 
-    # Step 5: Drop duplicates in the cleaned DataFrame
-    logger.debug("Step 5: Dropping duplicates")
+    # Step 6: Drop duplicates in the cleaned DataFrame
+    logger.debug("Step 6: Dropping duplicates")
     df_cleaned = drop_duplicates(df_cleaned)
 
-    # Step 6: Add dataset name column
-    logger.debug("Step 6: Adding dataset name column")
+    # Step 7: Add dataset name column
+    logger.debug("Step 7: Adding dataset name column")
     df_cleaned["dataset_name"] = "frenchmedmcqa"
 
     logger.info(f"FrenchMedMCQA cleaning completed. Output shape: {df_cleaned.shape}")
@@ -64,6 +71,17 @@ def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
 
 # === Helper functions ===
 
+def drop_false_answers(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop rows where the question mention "une seule est fausse".
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame.
+
+    Returns:
+    pd.DataFrame: A DataFrame with rows where the question mention "une seule est fausse" dropped.
+    """
+    return df[~df["question"].str.contains("une seule est fausse")]
 
 if __name__ == "__main__":
     from datasets import load_from_disk
