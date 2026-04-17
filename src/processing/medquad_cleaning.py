@@ -40,8 +40,13 @@ def clean_medquad(df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("Step 3: Renaming columns")
     df.rename(columns={"Question": "question", "Answer": "answer"}, inplace=True)
 
-    # Step 4: Add dataset name column
-    logger.debug("Step 4: Adding dataset name column")
+    # Step 4: lower case text
+    logger.debug("Step 4: Lowercasing text")
+    df["question"] = df["question"].str.lower()
+    df["answer"] = df["answer"].str.lower()
+
+    # Step 5: Add dataset name column
+    logger.debug("Step 5: Adding dataset name column")
     df["dataset_name"] = "medquad"
 
     logger.info(f"MedQuad cleaning completed. Output shape: {df.shape}")

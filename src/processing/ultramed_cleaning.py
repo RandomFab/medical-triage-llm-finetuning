@@ -37,8 +37,13 @@ def clean_ultramed(df: pd.DataFrame) -> pd.DataFrame:
     df = drop_duplicates(df)
     logger.info(f"UltraMedical cleaning completed. Output shape: {df.shape}")
 
-    # Step 3: Add dataset name column
-    logger.debug("Step 3: Adding dataset name column")
+    # Step 3: lower case text
+    logger.debug("Step 3: Lowercasing text")
+    df["question"] = df["question"].str.lower()
+    df["answer"] = df["answer"].str.lower()
+
+    # Step 4: Add dataset name column
+    logger.debug("Step 4: Adding dataset name column")
     df["dataset_name"] = "ultramed"
 
     return df
