@@ -5,6 +5,7 @@ import yaml
 
 from config.logger import logger
 from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, SFT_DATASET_DIR
+from src.processing.anonymisation import anonymize_text
 
 
 def extract_samples(
@@ -79,6 +80,12 @@ if __name__ == "__main__":
         logger.info(
             f"  Added {nb_of_sample} samples | Total in dataset: {len(sft_dataset)}/{target_samples}"
         )
+
+    # Anonumisation des questions et réponses des samples pour SFT    
+    columns_to_anonymize = ["question", "answer"]
+
+    for col in columns_to_anonymize:
+        sft_dataset[col] = sft_dataset[col].map(anonymize_text)
 
     logger.info("=" * 60)
     logger.info(f"Final dataset size: {len(sft_dataset)} rows (Target: {target_samples})")

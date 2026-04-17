@@ -9,8 +9,11 @@ dependencies = [
     "gcsfs>=2026.2.0",
     "google-cloud-storage>=3.10.1",
     "ipykernel==6.29.5",
+    "langdetect>=1.0.9",
     "matplotlib>=3.10.8",
     "pandas>=3.0.2",
+    "presidio-analyzer>=2.2.362",
+    "presidio-anonymizer>=2.2.362",
     "pyyaml>=6.0.3",
     "seaborn>=0.13.2",
 ]
