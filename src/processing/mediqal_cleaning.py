@@ -40,20 +40,21 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("Step 1: Dropping duplicates")
     df = drop_duplicates(df)
 
-    # Step 2: Drop clinical cases lines
-    logger.debug("Step 2: Dropping clinical cases lines")
-    df = drop_clinical_cases(df)
 
-    # Step 3: Drop unnecessary columns
-    logger.debug("Step 3: Dropping unnecessary columns")
+    # Step 2: Drop unnecessary columns
+    logger.debug("Step 2: Dropping unnecessary columns")
     df = drop_columns(
-        df, ["id", "task", "clinical_case", "medical_subject", "question_type"]
+        df, ["id", "task", "medical_subject", "question_type"]
     )
 
-    # Step 4: Map correct answer indices to their corresponding answer text
-    logger.debug("Step 4: Transforming correct answers to text")
+    # Step 3: Map correct answer indices to their corresponding answer text
+    logger.debug("Step 3: Transforming correct answers to text")
     df = transform_correct_answers_to_text(df, MATCH_ANSWER_DICT)
     df = create_ground_truth_answer_column(df)
+
+    # Step 4: Merge clinical case and question columns
+    logger.debug("Step 4: Merging clinical case and question columns")
+    df = merge_clinical_case_and_question(df)
 
     # Step 5: Create a new DataFrame with only 'question' and 'answer' columns
     logger.debug("Step 5: Selecting final columns")
@@ -61,7 +62,6 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
 
     # Step 6: Drop duplicates in the cleaned DataFrame
     logger.debug("Step 6: Dropping duplicates in final dataset")
-    initial_clean_shape = df_cleaned.shape[0]
     df_cleaned = drop_duplicates(df_cleaned)
 
     # Step 7: Add dataset name column
@@ -73,14 +73,20 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # === Helper functions ===
-def drop_clinical_cases(df):
-    """Keep only rows where clinical_case column is not null."""
-    logger.debug(f"drop_clinical_cases: Input shape {df.shape}")
-    df_filtered = df[df["clinical_case"].isna()]
-    logger.debug(
-        f"drop_clinical_cases: Output shape {df_filtered.shape} ({len(df) - len(df_filtered)} rows removed)"
-    )
-    return df_filtered
+
+def merge_clinical_case_and_question(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge the 'clinical_case' and 'question' columns into a single 'question' column.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the MedIQAL dataset.
+
+    Returns:
+    pd.DataFrame: A DataFrame with the merged 'question' column.
+    """
+    logger.debug("Merging 'clinical_case' and 'question' columns")
+    df["question"] = df["clinical_case"] + " " + df["question"]
+    return df
 
 
 if __name__ == "__main__":
