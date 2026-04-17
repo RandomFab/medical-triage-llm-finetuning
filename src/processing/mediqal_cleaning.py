@@ -64,8 +64,25 @@ def clean_mediqal(df: pd.DataFrame) -> pd.DataFrame:
     logger.debug("Step 6: Dropping duplicates in final dataset")
     df_cleaned = drop_duplicates(df_cleaned)
 
-    # Step 7: Add dataset name column
-    logger.debug("Step 7: Adding dataset name column")
+    # Step 7: Erase non-essential text from questions
+    logger.debug("Step 7: Erasing non-essential text from questions")
+    df_cleaned = erase_non_essential_text_(df_cleaned)
+
+    # Step 8: Drop questions that ask for false answers
+    logger.debug("Step 8: Dropping questions that ask for false answers")
+    df_cleaned = drop_question_with_false_answers_asked(df_cleaned)
+
+    # Step 9: Drop questions with numbered proposals in the question body
+    logger.debug("Step 9: Dropping questions with numbered proposals")
+    df_cleaned = drop_questions_with_numbered_proposals(df_cleaned)
+
+    # Step 10: lower case text
+    logger.debug("Step 10: Lowercasing text")
+    df_cleaned["question"] = df_cleaned["question"].str.lower()
+    df_cleaned["answer"] = df_cleaned["answer"].str.lower()
+
+    # Step 11: Add dataset name column
+    logger.debug("Step 11: Adding dataset name column")
     df_cleaned["dataset_name"] = "mediqal"
 
     logger.info(f"MedIQAL cleaning completed. Output shape: {df_cleaned.shape}")
@@ -102,6 +119,26 @@ def erase_non_essential_text_(df: pd.DataFrame) -> pd.DataFrame:
 
     df["question"] = df["question"].str.replace("(cochez la réponse juste)", "")
     return df
+
+def drop_questions_with_numbered_proposals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop rows where the question contains numbered proposals (e.g. "1. ", "1) ", "1- ")
+    AND the answer is a combination of numbers (e.g. "1+2+3" or "1 3 5").
+    These patterns are unsuitable for training as the model would need to output
+    a list of indices rather than a proper textual answer.
+    """
+    logger.debug("Dropping questions with numbered proposals and indexed answers")
+    question_has_proposals = df["question"].str.contains(
+        r"\n\s*\d+[.\-\)]\s+\S", regex=True
+    )
+    answer_is_indices = df["answer"].str.contains(
+        r"^\s*\d+(\s*[+\s]\s*\d+)+\s*$", regex=True
+    )
+    mask = question_has_proposals & answer_is_indices
+    n_dropped = mask.sum()
+    logger.debug(f"Dropping {n_dropped} rows with numbered proposals")
+    return df[~mask]
+
 
 def drop_question_with_false_answers_asked(df: pd.DataFrame) -> pd.DataFrame:
     """
