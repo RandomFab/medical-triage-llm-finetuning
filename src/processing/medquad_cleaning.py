@@ -1,6 +1,6 @@
 from json import load
 
-from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
+from .utils_cleaning import drop_columns, save_cleaned_data_local, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
 import pandas as pd
 from config.logger import logger
 
@@ -43,11 +43,14 @@ def clean_medquad(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     from datasets import load_from_disk
+    from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
 
-    datasets = load_from_disk("gs://p14-medical-data/raw_data/MedQuad_dataset")
+    datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/MedQuad_dataset")
 
-     # Iterate over splits (train, validation, test)
     for split_name, dataset in datasets.items():
         df = dataset.to_pandas()
         df_cleaned = clean_medquad(df)
-        save_cleaned_data_to_gcs(df_cleaned, "p14-medical-data", f"processed_data/medquad_dataset/medquad_{split_name}.parquet")
+        save_cleaned_data_local(
+            df_cleaned,
+            PROCESSED_DATA_DIR / "medquad_dataset" / f"medquad_{split_name}.parquet",
+        )

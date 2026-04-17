@@ -1,6 +1,6 @@
 from .utils_cleaning import (
     drop_columns,
-    save_cleaned_data_to_gcs,
+    save_cleaned_data_local,
     drop_duplicates,
     transform_correct_answers_to_text,
     create_ground_truth_answer_column,
@@ -80,13 +80,15 @@ def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import pandas as pd
     from datasets import load_from_disk
+    from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
 
-    datasets = load_from_disk("gs://p14-medical-data/raw_data/UltraMedical_dataset")
-    
-    # Iterate over splits (train, validation, test)
+    datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/UltraMedical_dataset")
+
     for split_name, dataset in datasets.items():
         df = dataset.to_pandas()
         df_cleaned = clean_ultramed(df)
-        save_cleaned_data_to_gcs(df_cleaned, "p14-medical-data", f"processed_data/ultramed_dataset/ultramed_{split_name}.parquet")
+        save_cleaned_data_local(
+            df_cleaned,
+            PROCESSED_DATA_DIR / "ultramed_dataset" / f"ultramed_{split_name}.parquet",
+        )

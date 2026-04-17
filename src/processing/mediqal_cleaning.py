@@ -1,4 +1,4 @@
-from .utils_cleaning import drop_columns, save_cleaned_data_to_gcs, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
+from .utils_cleaning import drop_columns, save_cleaned_data_local, drop_duplicates, transform_correct_answers_to_text, create_ground_truth_answer_column
 import pandas as pd
 from config.logger import logger
 
@@ -66,13 +66,15 @@ def drop_clinical_cases(df):
     return df_filtered
 
 if __name__ == "__main__":
-    import pandas as pd
     from datasets import load_from_disk
-    # Load the dataset
-    datasets = load_from_disk("gs://p14-medical-data/raw_data/mediqal_datasets/mcqu_medical/")
-    
-    # Iterate over splits (train, validation, test)
+    from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
+
+    datasets = load_from_disk(f"{RAW_DATA_GCS_URL}/mediqal_datasets/mcqu_medical/")
+
     for split_name, dataset in datasets.items():
         df = dataset.to_pandas()
         df_cleaned = clean_mediqal(df)
-        save_cleaned_data_to_gcs(df_cleaned, "p14-medical-data", f"processed_data/mediqal_dataset/mediqal_{split_name}.parquet")
+        save_cleaned_data_local(
+            df_cleaned,
+            PROCESSED_DATA_DIR / "mediqal_dataset" / f"mediqal_{split_name}.parquet",
+        )
