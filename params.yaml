@@ -2,7 +2,7 @@ sft:
   target_samples: 5000
   random_state: 42
   source_datasets:
-    - mediqal_dataset/mediqal_train.parquet
-    - frenchmedmcqa_dataset/frenchmedmcqa_train.parquet
-    - medquad_dataset/medquad_train.parquet
-    - ultramed_dataset/ultramed_train.parquet
+    - mediqal_dataset/mediqal.parquet
+    - frenchmedmcqa_dataset/frenchmedmcqa.parquet
+    - medquad_dataset/medquad.parquet
+    - ultramed_dataset/ultramed.parquet

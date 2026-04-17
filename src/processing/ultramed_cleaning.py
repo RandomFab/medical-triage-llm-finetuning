@@ -61,13 +61,7 @@ def transform_conversation_to_qa_format(df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Transforming UltraMedical dataset to question-answer format")
 
-    questions = []
-    answers = []
-
-    result = df.apply(extract_qa, axis=1)
-
-    # Create a new DataFrame with 'question' and 'answer' columns
-    qa_df = pd.DataFrame({"question": questions, "answer": answers})
+    qa_df = df.apply(extract_qa, axis=1)
 
     logger.info(f"Transformation completed. Output shape: {qa_df.shape}")
     return qa_df
