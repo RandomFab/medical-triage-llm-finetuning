@@ -88,7 +88,35 @@ def merge_clinical_case_and_question(df: pd.DataFrame) -> pd.DataFrame:
     df["question"] = df["clinical_case"] + " " + df["question"]
     return df
 
+def erase_non_essential_text_(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Erase non-essential text from the 'question' column, such as instructions or formatting.
 
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the MedIQAL dataset.
+
+    Returns:
+    pd.DataFrame: A DataFrame with cleaned 'question' text.
+    """
+    logger.debug("Erasing non-essential text from 'question' column")
+
+    df["question"] = df["question"].str.replace("(cochez la réponse juste)", "")
+    return df
+
+def drop_question_with_false_answers_asked(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop rows where the question asks for false answers, as they may not be suitable for training.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing the MedIQAL dataset.
+
+    Returns:
+    pd.DataFrame: A DataFrame with rows containing false answer questions removed.
+    """
+    logger.debug("Dropping questions that ask for false answers")
+    mask = df["question"].str.contains("cochez la réponse fausse", case=False)
+    df = df[~mask]
+    return df
 if __name__ == "__main__":
     from datasets import load_from_disk
     from config.paths import PROCESSED_DATA_DIR, RAW_DATA_GCS_URL
