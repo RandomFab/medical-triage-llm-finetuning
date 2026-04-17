@@ -5,4 +5,4 @@ sft:
     - mediqal_dataset/mediqal.parquet
     - frenchmedmcqa_dataset/frenchmedmcqa.parquet
     - medquad_dataset/medquad.parquet
-    - ultramed_dataset/ultramed.parquet
+    - ultramed_dataset/ultramed_SFT.parquet

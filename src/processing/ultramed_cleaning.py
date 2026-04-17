@@ -77,7 +77,8 @@ def clean_ultramed_for_DPO(df: pd.DataFrame) -> pd.DataFrame:
     # Step 3: lower case text
     logger.debug("Step 3: Lowercasing text")
     df["question"] = df["question"].str.lower()
-    df["answer"] = df["answer"].str.lower()
+    df["chosen"] = df["chosen"].str.lower()
+    df["rejected"] = df["rejected"].str.lower()
 
     # Step 4: Add dataset name column
     logger.debug("Step 4: Adding dataset name column")
