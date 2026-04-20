@@ -1,4 +1,5 @@
 from .utils_cleaning import (
+    add_metadata,
     drop_columns,
     save_cleaned_data_local,
     drop_duplicates,
@@ -67,8 +68,14 @@ def clean_frenchmedmcqa(df: pd.DataFrame) -> pd.DataFrame:
     df_cleaned["answer"] = df_cleaned["answer"].str.lower()
 
     # Step 8: Add dataset name column
-    logger.debug("Step 8: Adding dataset name column")
-    df_cleaned["dataset_name"] = "frenchmedmcqa"
+    logger.debug("Step 8: Adding metadata")
+    df_cleaned = add_metadata(
+        df_cleaned,
+        language="fr",
+        question_type="mcq_single",
+        confidence_level="medium",
+        dataset_name="frenchmedmcqa"
+    )
 
     logger.info(f"FrenchMedMCQA cleaning completed. Output shape: {df_cleaned.shape}")
     return df_cleaned

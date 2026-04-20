@@ -1,9 +1,11 @@
 from pathlib import Path
 
 import pandas as pd
+import pandas
 from config.logger import logger
 
 
+# === Cleaning helper functions ===
 def save_cleaned_data_local(df: pd.DataFrame, destination_path: str | Path) -> None:
     """
     Save the cleaned DataFrame as a Parquet file on the local filesystem.
@@ -158,6 +160,53 @@ def create_ground_truth_answer_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def merge_raw_data_splits(datasets) -> pd.DataFrame:
+    """
+    Merge multiple raw data splits (e.g., train, validation, test) into a single DataFrame.
+
+    Parameters:
+    dataframes (dict): A dictionary where keys are split names and values are the corresponding DataFrames.
+
+    Returns:
+    pd.DataFrame: A single merged DataFrame containing all splits.
+    """
+    logger.info(f"Merging raw data splits")
+
+    merged_df = pd.DataFrame()
+
+    for dataset in datasets.values():
+        df = dataset.to_pandas()
+        merged_df = pd.concat([merged_df, df], ignore_index=True)
+
+    logger.info(
+        f"Successfully merged splits into a single DataFrame with shape: {merged_df.shape}"
+    )
+    return merged_df
+
+
+def add_metadata(df:pandas.DataFrame, language:str, question_type:str, confidence_level:str, dataset_name:str) -> pandas.DataFrame:
+    """
+    Add metadata columns to a DataFrame.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame.
+    language (str): The language of the dataset (e.g., 'en', 'fr').
+    question_type (str): The type of questions in the dataset (e.g., 'mcq_single', 'mcq_single', 'open_qa','conversational' ).
+    confidence_level (str): The confidence level of the dataset (e.g., 'low', 'medium', 'high').
+    dataset_name (str): The name of the dataset.
+
+    Returns:
+    pd.DataFrame: The DataFrame with metadata columns added.
+    """
+    df["language"] = language
+    df["question_type"] = question_type
+    df["confidence_level"] = confidence_level
+    df["dataset_name"] = dataset_name
+    return df
+
+
+# === Sampling helper functions ===
+
 def extract_samples(
     parquet_file_path: Path, sample: int, random_state: int
 ) -> tuple[pd.DataFrame, int]:
@@ -234,26 +283,4 @@ def collect_balanced_samples(
 
     return pd.concat(collected, ignore_index=True)
 
-
-def merge_raw_data_splits(datasets) -> pd.DataFrame:
-    """
-    Merge multiple raw data splits (e.g., train, validation, test) into a single DataFrame.
-
-    Parameters:
-    dataframes (dict): A dictionary where keys are split names and values are the corresponding DataFrames.
-
-    Returns:
-    pd.DataFrame: A single merged DataFrame containing all splits.
-    """
-    logger.info(f"Merging raw data splits")
-
-    merged_df = pd.DataFrame()
-
-    for dataset in datasets.values():
-        df = dataset.to_pandas()
-        merged_df = pd.concat([merged_df, df], ignore_index=True)
-
-    logger.info(
-        f"Successfully merged splits into a single DataFrame with shape: {merged_df.shape}"
-    )
-    return merged_df
+# === Splitting helper functions ===

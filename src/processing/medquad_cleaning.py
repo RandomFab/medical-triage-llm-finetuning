@@ -1,4 +1,5 @@
 from .utils_cleaning import (
+    add_metadata,
     drop_columns,
     merge_raw_data_splits,
     save_cleaned_data_local,
@@ -45,9 +46,15 @@ def clean_medquad(df: pd.DataFrame) -> pd.DataFrame:
     df["question"] = df["question"].str.lower()
     df["answer"] = df["answer"].str.lower()
 
-    # Step 5: Add dataset name column
-    logger.debug("Step 5: Adding dataset name column")
-    df["dataset_name"] = "medquad"
+    # Step 5: Add metadata
+    logger.debug("Step 5: Adding metadata")
+    df = add_metadata(
+        df,
+        language="en",
+        question_type="open_qa",
+        confidence_level="high",
+        dataset_name="medquad",
+    )
 
     logger.info(f"MedQuad cleaning completed. Output shape: {df.shape}")
     return df

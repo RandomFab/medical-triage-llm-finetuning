@@ -1,4 +1,5 @@
 from .utils_cleaning import (
+    add_metadata,
     drop_columns,
     merge_raw_data_splits,
     save_cleaned_data_local,
@@ -81,8 +82,14 @@ def clean_ultramed_for_DPO(df: pd.DataFrame) -> pd.DataFrame:
     df["rejected"] = df["rejected"].str.lower()
 
     # Step 4: Add dataset name column
-    logger.debug("Step 4: Adding dataset name column")
-    df["dataset_name"] = "ultramed"
+    logger.debug("Step 4: Adding metadata")
+    df = add_metadata(
+        df,
+        language="en",
+        question_type="conversational",
+        confidence_level="low",
+        dataset_name="ultramed"
+    )
 
     return df
 
