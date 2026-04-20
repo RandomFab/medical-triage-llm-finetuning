@@ -6,3 +6,8 @@ sft:
     - frenchmedmcqa_dataset/frenchmedmcqa.parquet
     - medquad_dataset/medquad.parquet
     - ultramed_dataset/ultramed_SFT.parquet
+dpo:
+  target_samples: 5000
+  random_state: 42
+  source_datasets:
+    - ultramed_dataset/ultramed_DPO.parquet

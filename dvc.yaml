@@ -50,3 +50,16 @@ stages:
       - sft.source_datasets
     outs:
       - data/processed/sft_dataset
+
+  generate_dpo:
+    cmd: python -m src.processing.dpo_dataset.generate_dpo_dataset
+    deps:
+      - src/processing/dpo_dataset/generate_dpo_dataset.py
+      - config/paths.py
+      - data/processed/ultramed_dataset
+    params:
+      - dpo.target_samples
+      - dpo.random_state
+      - dpo.source_datasets
+    outs:
+      - data/processed/dpo_dataset
