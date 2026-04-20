@@ -3,7 +3,7 @@ import yaml
 from config.logger import logger
 from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, DPO_DATASET_DIR
 from src.processing.anonymisation import anonymize_text
-from src.processing.utils_cleaning import collect_balanced_samples
+from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples
 
 
 if __name__ == "__main__":
@@ -36,6 +36,8 @@ if __name__ == "__main__":
     columns_to_anonymize = ["question", "chosen", "rejected"]
     for col in columns_to_anonymize:
         dpo_dataset[col] = dpo_dataset[col].map(anonymize_text)
+
+    dpo_dataset = add_token_counts(dpo_dataset, columns=["question", "chosen", "rejected"])
 
     logger.info("=" * 60)
     logger.info(f"Final dataset size: {len(dpo_dataset)} rows (Target: {target_samples})")

@@ -3,7 +3,7 @@ import yaml
 from config.logger import logger
 from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, SFT_DATASET_DIR
 from src.processing.anonymisation import anonymize_text
-from src.processing.utils_cleaning import collect_balanced_samples
+from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples
 
 
 if __name__ == "__main__":
@@ -36,6 +36,8 @@ if __name__ == "__main__":
     columns_to_anonymize = ["question", "answer"]
     for col in columns_to_anonymize:
         sft_dataset[col] = sft_dataset[col].map(anonymize_text)
+
+    sft_dataset = add_token_counts(sft_dataset, columns=["question", "answer"])
 
     logger.info("=" * 60)
     logger.info(f"Final dataset size: {len(sft_dataset)} rows (Target: {target_samples})")

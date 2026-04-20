@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -183,7 +184,7 @@ def merge_raw_data_splits(datasets) -> pd.DataFrame:
     )
     return merged_df
 
-
+# === Metadata helper functions ===
 def add_metadata(df:pandas.DataFrame, language:str, question_type:str, confidence_level:str, dataset_name:str) -> pandas.DataFrame:
     """
     Add metadata columns to a DataFrame.
@@ -204,6 +205,40 @@ def add_metadata(df:pandas.DataFrame, language:str, question_type:str, confidenc
     df["dataset_name"] = dataset_name
     return df
 
+from functools import lru_cache
+@lru_cache(maxsize=1)
+def _get_qwen_tokenizer():
+    """Chargé une seule fois par process (lru_cache)."""
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained("Qwen/Qwen3-1.7B-Base")
+
+
+def add_token_counts(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """
+    Ajoute une colonne token_count_<col> pour chaque colonne texte spécifiée.
+
+    Args:
+        df: DataFrame contenant les colonnes texte à tokenizer.
+        columns: Liste des noms de colonnes (ex: ["question", "answer"]).
+
+    Returns:
+        DataFrame enrichi avec les colonnes de comptage.
+    """
+    logger.info(f"Computing token counts with Qwen3 tokenizer for columns: {columns}")
+    tokenizer = _get_qwen_tokenizer()
+
+    for col in columns:
+        # batch=True via une list comprehension : plus rapide qu'un .apply
+        texts = df[col].fillna("").tolist()
+        encodings = tokenizer(texts, add_special_tokens=False)
+        df[f"token_count_{col}"] = [len(ids) for ids in encodings["input_ids"]]
+        logger.info(
+            f"  {col}: min={df[f'token_count_{col}'].min()}, "
+            f"median={df[f'token_count_{col}'].median():.0f}, "
+            f"max={df[f'token_count_{col}'].max()}"
+        )
+
+    return df
 
 # === Sampling helper functions ===
 
