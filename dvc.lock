@@ -5,16 +5,16 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: e40f43246588d67293a747dc9e68f9b9
-      size: 271
+      md5: 7638e9d09281a203e700cb3da8c73596
+      size: 325
     - path: src/processing/mediqal_cleaning.py
       hash: md5
       md5: 5ed5d92f9bbecec59dbecafda461323a
       size: 6215
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: efd8bd14fd4557538bbf9d9d3052691a
-      size: 6373
+      md5: 1c95bc8db522c83fdd25ce8c12da5750
+      size: 9259
     outs:
     - path: data/processed/mediqal_dataset
       hash: md5
@@ -26,16 +26,16 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: e40f43246588d67293a747dc9e68f9b9
-      size: 271
+      md5: 7638e9d09281a203e700cb3da8c73596
+      size: 325
     - path: src/processing/medquad_cleaning.py
       hash: md5
       md5: 3e6892a79ac885fb4d1eb66fd26b6206
       size: 2210
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: efd8bd14fd4557538bbf9d9d3052691a
-      size: 6373
+      md5: 1c95bc8db522c83fdd25ce8c12da5750
+      size: 9259
     outs:
     - path: data/processed/medquad_dataset
       hash: md5
@@ -47,16 +47,16 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: e40f43246588d67293a747dc9e68f9b9
-      size: 271
+      md5: 7638e9d09281a203e700cb3da8c73596
+      size: 325
     - path: src/processing/frenchmedmcqa_cleaning.py
       hash: md5
       md5: 29908e4fa3e231295509a3439b89f7b4
       size: 3468
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: efd8bd14fd4557538bbf9d9d3052691a
-      size: 6373
+      md5: 1c95bc8db522c83fdd25ce8c12da5750
+      size: 9259
     outs:
     - path: data/processed/frenchmedmcqa_dataset
       hash: md5
@@ -68,16 +68,16 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: e40f43246588d67293a747dc9e68f9b9
-      size: 271
+      md5: 7638e9d09281a203e700cb3da8c73596
+      size: 325
     - path: src/processing/ultramed_cleaning.py
       hash: md5
       md5: 2ecda90f38d0b8b7d8107fcaec7ab132
       size: 5835
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: efd8bd14fd4557538bbf9d9d3052691a
-      size: 6373
+      md5: 1c95bc8db522c83fdd25ce8c12da5750
+      size: 9259
     outs:
     - path: data/processed/ultramed_dataset
       hash: md5
@@ -89,8 +89,8 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: e40f43246588d67293a747dc9e68f9b9
-      size: 271
+      md5: 7638e9d09281a203e700cb3da8c73596
+      size: 325
     - path: data/processed/frenchmedmcqa_dataset
       hash: md5
       md5: 012ebec8fbf975158fb5131c806bff48.dir
@@ -113,8 +113,8 @@ stages:
       nfiles: 2
     - path: src/processing/sft_dataset/generate_sft_dataset.py
       hash: md5
-      md5: cc08fb5741ea147a4a66b298310baed2
-      size: 3826
+      md5: 7d938bba08645dcfa4f476d6aeaf84ec
+      size: 1778
     params:
       params.yaml:
         sft.random_state: 42
@@ -127,6 +127,34 @@ stages:
     outs:
     - path: data/processed/sft_dataset
       hash: md5
-      md5: 1d24e4725b3e47526498f92740207cba.dir
-      size: 3146564
+      md5: 01215e7798f938eb3e7204a1e82cf0af.dir
+      size: 3146720
+      nfiles: 1
+  generate_dpo:
+    cmd: python -m src.processing.dpo_dataset.generate_dpo_dataset
+    deps:
+    - path: config/paths.py
+      hash: md5
+      md5: 7638e9d09281a203e700cb3da8c73596
+      size: 325
+    - path: data/processed/ultramed_dataset
+      hash: md5
+      md5: c1d60331cbb1cecea607926988012671.dir
+      size: 377716558
+      nfiles: 2
+    - path: src/processing/dpo_dataset/generate_dpo_dataset.py
+      hash: md5
+      md5: 241069b69cf94b6d9eac10910eaaf841
+      size: 1790
+    params:
+      params.yaml:
+        dpo.random_state: 42
+        dpo.source_datasets:
+        - ultramed_dataset/ultramed_DPO.parquet
+        dpo.target_samples: 5000
+    outs:
+    - path: data/processed/dpo_dataset
+      hash: md5
+      md5: 4e8b38e616652b6a6081ee39e32f51c8.dir
+      size: 12052014
       nfiles: 1
