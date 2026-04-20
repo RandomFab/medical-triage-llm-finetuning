@@ -17,8 +17,9 @@
    - 2.2 [Ingestion des données brutes](#22-ingestion-des-données-brutes)
    - 2.3 [Pipeline de nettoyage](#23-pipeline-de-nettoyage)
    - 2.4 [Anonymisation et conformité RGPD](#24-anonymisation-et-conformité-rgpd)
-   - 2.5 [Constitution du dataset SFT](#25-constitution-du-dataset-sft)
-   - 2.6 [Versionnement et reproductibilité avec DVC](#26-versionnement-et-reproductibilité-avec-dvc)
+   - 2.5 [Schéma de données unifié](#25-schéma-de-données-unifié)
+   - 2.6 [Constitution du dataset SFT](#26-constitution-du-dataset-sft)
+   - 2.7 [Versionnement et reproductibilité avec DVC](#27-versionnement-et-reproductibilité-avec-dvc)
 3. [Fine-tuning supervisé (SFT) avec LoRA](#3-fine-tuning-supervisé-sft-avec-lora)
 4. [Alignement par préférences (DPO)](#4-alignement-par-préférences-dpo)
 5. [Déploiement et infrastructure](#5-déploiement-et-infrastructure)
@@ -238,7 +239,94 @@ Le pipeline d'anonymisation repose sur deux composants :
 
 Il convient de noter que les quatre datasets utilisés sont des corpus publics accessibles sur Hugging Face, composés principalement de questions d'examen ou de contenu médical encyclopédique. Le risque réel de présence de PII y est faible. Néanmoins, la mise en place du mécanisme d'anonymisation démontre la prise en compte de la conformité dès la phase de POC, et constitue une brique réutilisable pour de futurs corpus contenant potentiellement des données patient réelles.
 
-### 2.5 Constitution du dataset SFT
+### 2.5 Schéma de données unifié
+
+À l'issue du nettoyage, chaque dataset produit un fichier Parquet dont le schéma est strictement identique. Cette uniformisation est assurée par deux helpers partagés dans `src/processing/utils_cleaning.py` : `add_metadata()` et `add_token_counts()`.
+
+#### 2.5.1 Colonnes de contenu
+
+| Colonne | Type | Description |
+|---|---|---|
+| `question` | `str` | Texte de la question, après toutes les transformations de nettoyage. Pour MediQAL, inclut le cas clinique préfixé. |
+| `answer` | `str` | Texte de la réponse en clair, après résolution des indices pour les datasets QCM. |
+
+Pour MediQAL uniquement, deux colonnes supplémentaires sont présentes dans le fichier Parquet intermédiaire : `has_clinical_case` (`bool`) et `medical_subject` (`str`). Comme `extract_samples` lit le Parquet sans filtrer les colonnes (`pd.read_parquet` sans `columns=`), elles se retrouvent dans le dataset SFT final — mais uniquement renseignées pour les lignes MediQAL, avec `NaN` pour les trois autres sources.
+
+#### 2.5.2 Colonnes de métadonnées structurées
+
+La fonction `add_metadata()` appose quatre colonnes systématiquement sur chaque DataFrame nettoyé :
+
+```python
+def add_metadata(df, language, question_type, confidence_level, dataset_name):
+    df["language"]         = language
+    df["question_type"]    = question_type
+    df["confidence_level"] = confidence_level
+    df["dataset_name"]     = dataset_name
+    return df
+```
+
+Le tableau ci-dessous détaille les valeurs appliquées par source :
+
+| Dataset | `language` | `question_type` | `confidence_level` | `dataset_name` |
+|---|:---:|:---:|:---:|:---:|
+| MediQAL MCQU | `"fr"` | `"mcq_single"` | `"medium"` | `"mediqal"` |
+| FrenchMedMCQA | `"fr"` | `"mcq_single"` | `"medium"` | `"frenchmedmcqa"` |
+| MedQuAD | `"en"` | `"open_qa"` | `"high"` | `"medquad"` |
+| UltraMedical-Preference | `"en"` | `"conversational"` | `"low"` | `"ultramed"` |
+
+**`language`** — Code langue ISO à deux lettres. Permet de stratifier les échantillons ou de filtrer par langue lors du fine-tuning.
+
+**`question_type`** — Catégorisation du format de la paire QA :
+- `mcq_single` : question à choix multiple avec une seule réponse correcte (datasets francophones d'examen) ;
+- `open_qa` : question ouverte avec réponse rédigée (MedQuAD) ;
+- `conversational` : paire extraite d'un tour de conversation (UltraMedical).
+
+**`confidence_level`** — Estimation de la fiabilité de la réponse en tant que signal d'entraînement :
+- `high` : réponses issues de sources institutionnelles (NIH, NCI) avec rédaction structurée (MedQuAD) ;
+- `medium` : réponses issues de référentiels d'examen médical (MediQAL, FrenchMedMCQA) — fiables mais formulées de façon concise ;
+- `low` : réponses extraites automatiquement depuis des conversations multi-tours préférence (UltraMedical) — potentiellement verbeux ou mal calibrés.
+
+Cette gradation permet de pondérer les échantillons lors du SFT ou d'exclure les sources de faible confiance dans les expérimentations futures.
+
+**`dataset_name`** — Identifiant de source servant de clé de stratification lors de l'échantillonnage (section 2.6).
+
+#### 2.5.3 Colonnes de comptage de tokens
+
+La fonction `add_token_counts()`, ajoutée après l'étape d'anonymisation dans les deux pipelines (SFT et DPO), calcule la longueur en tokens de chaque colonne texte à l'aide du tokenizer de Qwen3-1.7B-Base :
+
+```python
+def add_token_counts(df, columns):
+    tokenizer = _get_qwen_tokenizer()   # lru_cache — chargé une seule fois
+    for col in columns:
+        encodings = tokenizer(df[col].fillna("").tolist(), add_special_tokens=False)
+        df[f"token_count_{col}"] = [len(ids) for ids in encodings["input_ids"]]
+    return df
+```
+
+Pour le dataset SFT, deux colonnes sont ainsi ajoutées : `token_count_question` et `token_count_answer`. Pour le dataset DPO, les colonnes `token_count_chosen` et `token_count_rejected` sont produites.
+
+Le recours au tokenizer du modèle cible (et non à une approximation par `len(text.split())`) garantit que les longueurs reflètent exactement le coût en séquence lors du fine-tuning. Ces colonnes servent à filtrer en amont les séquences qui dépasseraient la fenêtre de contexte du modèle, évitant ainsi une troncature silencieuse lors de l'entraînement.
+
+L'utilisation de `lru_cache(maxsize=1)` sur `_get_qwen_tokenizer()` évite de recharger le tokenizer depuis le disque à chaque appel, ce qui serait coûteux dans un contexte de traitement batch.
+
+#### 2.5.4 Schéma complet du dataset SFT final
+
+Le fichier `data/processed/sft_dataset/sft_dataset.parquet` expose le schéma suivant :
+
+| Colonne | Type | Présence | Description |
+|---|---|:---:|---|
+| `question` | `str` | Toujours | Question nettoyée |
+| `answer` | `str` | Toujours | Réponse en texte clair |
+| `dataset_name` | `str` | Toujours | Source d'origine |
+| `language` | `str` | Toujours | `"fr"` ou `"en"` |
+| `question_type` | `str` | Toujours | `"mcq_single"`, `"open_qa"` ou `"conversational"` |
+| `confidence_level` | `str` | Toujours | `"low"`, `"medium"` ou `"high"` |
+| `token_count_question` | `int` | Toujours | Nombre de tokens (tokenizer Qwen3) |
+| `token_count_answer` | `int` | Toujours | Nombre de tokens (tokenizer Qwen3) |
+| `has_clinical_case` | `bool` | MediQAL uniquement (`NaN` ailleurs) | Indique si la question était associée à un cas clinique |
+| `medical_subject` | `str` | MediQAL uniquement (`NaN` ailleurs) | Spécialité médicale d'origine |
+
+### 2.6 Constitution du dataset SFT
 
 L'objectif de cette étape est de consolider les quatre corpus nettoyés en un unique dataset de 5 000 paires `(question, answer)` prêt pour le fine-tuning supervisé. Le script `src/processing/sft_dataset/generate_sft_dataset.py` implémente un mécanisme d'échantillonnage équilibré piloté par les paramètres définis dans `params.yaml` :
 
@@ -255,19 +343,19 @@ sft:
 
 L'algorithme répartit le quota de 5 000 échantillons de manière équitable entre les quatre sources. Pour chaque dataset, le nombre de lignes à prélever est calculé dynamiquement en divisant le quota restant par le nombre de sources restantes à traiter. Si un dataset contient moins de lignes que sa part théorique (cas de FrenchMedMCQA avec ses quelques centaines de lignes nettoyées), l'ensemble de ses données est inclus et le surplus est redistribué aux datasets suivants. Le seed de randomisation (`random_state=42`) assure la reproductibilité de l'échantillonnage.
 
-Le dataset SFT final est sauvegardé en un unique fichier Parquet (`data/processed/sft_dataset/sft_dataset.parquet`) et contient trois colonnes : `question`, `answer` et `dataset_name`.
+Le dataset SFT final est sauvegardé en un unique fichier Parquet (`data/processed/sft_dataset/sft_dataset.parquet`). Son schéma complet est décrit en section 2.5.
 
-### 2.6 Versionnement et reproductibilité avec DVC
+### 2.7 Versionnement et reproductibilité avec DVC
 
 L'intégralité du pipeline de nettoyage et de constitution du dataset SFT est orchestrée par **DVC (Data Version Control)**, un outil open source de versionnement de données et de pipelines ML. Le choix de DVC répond directement à l'exigence de traçabilité formulée dans le cahier des charges : "conserver une trace de chaque transformation de données".
 
 Le fichier `dvc.yaml` définit cinq stages organisés en graphe acyclique dirigé (DAG) :
 
 ```
-clean_mediqal → ─┐
-clean_medquad → ──┤
-clean_frenchmedmcqa → ┤→ generate_sft
-clean_ultramed → ──┘
+clean_mediqal ────────┐
+clean_medquad ────────┤
+clean_frenchmedmcqa ──┤→ generate_sft
+clean_ultramed ───────┘
 ```
 
 Chaque stage déclare explicitement ses dépendances (scripts Python, fichiers de configuration) et ses sorties (répertoires de données traitées). DVC calcule un hash MD5 pour chaque entrée et sortie, ce qui permet de détecter automatiquement si une étape doit être ré-exécutée suite à une modification de code ou de données.
