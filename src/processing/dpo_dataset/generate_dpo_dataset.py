@@ -33,7 +33,7 @@ if __name__ == "__main__":
         random_state=random_state,
     )
 
-    columns_to_anonymize = ["question", "choosen", "rejected"]
+    columns_to_anonymize = ["question", "chosen", "rejected"]
     for col in columns_to_anonymize:
         dpo_dataset[col] = dpo_dataset[col].map(anonymize_text)
 
