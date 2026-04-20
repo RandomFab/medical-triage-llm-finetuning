@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from re import X
 
 import pandas as pd
 import pandas
@@ -166,7 +167,7 @@ def merge_raw_data_splits(datasets) -> pd.DataFrame:
     Merge multiple raw data splits (e.g., train, validation, test) into a single DataFrame.
 
     Parameters:
-    dataframes (dict): A dictionary where keys are split names and values are the corresponding DataFrames.
+    datasets (dict): A dictionary where keys are split names and values are the corresponding HuggingFace datasets.
 
     Returns:
     pd.DataFrame: A single merged DataFrame containing all splits.
@@ -319,3 +320,28 @@ def collect_balanced_samples(
     return pd.concat(collected, ignore_index=True)
 
 # === Splitting helper functions ===
+from sklearn.model_selection import train_test_split
+
+def split_dataset(df: pd.DataFrame, random_state: int = 42, val_size: float = 0.2, test_size: float = 0.1) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split a DataFrame into train, validation, and test sets based on specified proportions.
+
+    Args:
+        df: The input DataFrame to split.
+        val_size: Proportion of the dataset to include in the validation split (e.g., 0.15).
+        test_size: Proportion of the dataset to include in the test split (e.g., 0.15).
+        random_state: Seed used by pandas.DataFrame.sample for reproducibility.
+    Returns:
+        A tuple of (train, val, test) — each is a full DataFrame including all columns.
+    """
+    logger.info("Splitting dataset into train, validation, and test sets")
+    logger.debug(f"DataFrame shape: {df.shape}")
+
+    X_train, X_test_val = train_test_split(df, test_size=test_size+val_size, random_state=random_state, stratify=df['dataset_name'])
+
+    relative_val_size = val_size / (val_size + test_size)
+    X_test, X_val = train_test_split(X_test_val, test_size=relative_val_size, random_state=random_state, stratify=X_test_val['dataset_name'])
+
+    logger.info(f"Train set: {len(X_train)} rows | Validation set: {len(X_val)} rows | Test set: {len(X_test)} rows | Total: {len(X_train) + len(X_val) + len(X_test)} rows")
+    return X_train, X_val, X_test
+

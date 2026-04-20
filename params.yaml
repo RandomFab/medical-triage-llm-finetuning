@@ -1,6 +1,8 @@
 sft:
   target_samples: 5000
   random_state: 42
+  val_size: 0.2
+  test_size: 0.1
   source_datasets:
     - mediqal_dataset/mediqal.parquet
     - frenchmedmcqa_dataset/frenchmedmcqa.parquet
@@ -9,5 +11,7 @@ sft:
 dpo:
   target_samples: 5000
   random_state: 42
+  val_size: 0.2
+  test_size: 0.1
   source_datasets:
     - ultramed_dataset/ultramed_DPO.parquet
