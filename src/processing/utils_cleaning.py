@@ -1,6 +1,5 @@
 from functools import lru_cache
 from pathlib import Path
-from re import X
 
 import pandas as pd
 import pandas
@@ -337,10 +336,10 @@ def split_dataset(df: pd.DataFrame, random_state: int = 42, val_size: float = 0.
     logger.info("Splitting dataset into train, validation, and test sets")
     logger.debug(f"DataFrame shape: {df.shape}")
 
-    X_train, X_test_val = train_test_split(df, test_size=test_size+val_size, random_state=random_state, stratify=df['dataset_name'])
+    X_train, X_val_test = train_test_split(df, test_size=test_size+val_size, random_state=random_state, stratify=df['dataset_name'])
 
-    relative_val_size = val_size / (val_size + test_size)
-    X_test, X_val = train_test_split(X_test_val, test_size=relative_val_size, random_state=random_state, stratify=X_test_val['dataset_name'])
+    relative_val_size = test_size / (val_size + test_size)
+    X_val, X_test = train_test_split(X_val_test, test_size=relative_val_size, random_state=random_state, stratify=X_val_test['dataset_name'])
 
     logger.info(f"Train set: {len(X_train)} rows | Validation set: {len(X_val)} rows | Test set: {len(X_test)} rows | Total: {len(X_train) + len(X_val) + len(X_test)} rows")
     return X_train, X_val, X_test

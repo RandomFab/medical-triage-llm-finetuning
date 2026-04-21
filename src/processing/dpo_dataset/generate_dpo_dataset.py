@@ -5,8 +5,7 @@ from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, DPO_DATASET_DIR
 from src.processing.anonymisation import anonymize_text
 from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples, split_dataset
 
-
-if __name__ == "__main__":
+def main():
     """
     Generate a balanced DPO dataset by sampling from multiple medical datasets.
 
@@ -52,10 +51,18 @@ if __name__ == "__main__":
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dpo_dataset.to_parquet(output_path, index=False)
 
-    X_train, X_val, X_test= split_dataset(dpo_dataset, random_state=random_state, val_size=0.2, test_size=0.1)
+    X_train, X_val, X_test= split_dataset(
+        dpo_dataset,
+        random_state=random_state, 
+        val_size=val_size, 
+        test_size=test_size
+        )
     X_train.to_parquet(DPO_DATASET_DIR / "dpo_train.parquet", index=False)
     X_val.to_parquet(DPO_DATASET_DIR / "dpo_val.parquet", index=False)
     X_test.to_parquet(DPO_DATASET_DIR / "dpo_test.parquet", index=False)
 
     logger.info(f"Successfully saved {len(dpo_dataset)} samples to {output_path}")
     logger.info("=" * 60)
+
+if __name__ == "__main__":
+    main()

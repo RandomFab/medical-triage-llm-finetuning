@@ -88,6 +88,18 @@ Le tableau ci-dessous synthétise les volumes bruts par source et par split :
 **Choix de la stratégie de split.**  
 Les datasets d'origine proposent des découpages train/validation/test hétérogènes : MediQAL et FrenchMedMCQA disposent de trois splits, tandis que MedQuAD et UltraMedical n'en offrent qu'un seul. Face à cette inconsistance, la décision a été prise de fusionner l'ensemble des splits de chaque source en un unique DataFrame, puis de constituer ultérieurement un split stratifié par source au niveau du dataset SFT consolidé. Cette approche présente deux avantages : elle maximise le volume de données disponibles pour l'échantillonnage, et elle garantit que chaque source est représentée de manière équilibrée dans les jeux d'entraînement, de validation et de test. La colonne `dataset_name`, ajoutée lors du nettoyage, sert de clé de stratification.
 
+**Licences et origines des sources.**  
+Le cahier des charges exige la traçabilité de l'origine et des conditions de réutilisation de chaque corpus. Le tableau ci-dessous synthétise ces informations :
+
+| Dataset | Hébergement | Licence | Commentaire |
+|---|---|---|---|
+| MediQAL (ANR-MALADES/MediQAl) | Hugging Face | À confirmer — projet ANR (usage académique présumé) | Contacter les auteurs avant tout usage commercial |
+| FrenchMedMCQA (nthngdy/frenchmedmcqa) | Hugging Face | Apache 2.0 | Réutilisation libre, attribution requise |
+| MedQuAD (keivalya/MedQuad) | Hugging Face | CC BY 4.0 (contenu NIH — domaine public américain) | Attribution requise |
+| UltraMedical-Preference (TsinghuaC3I/UltraMedical-Preference) | Hugging Face | MIT — à confirmer | Réutilisation libre sans restriction si confirmé |
+
+Les licences marquées "à confirmer" doivent être vérifiées directement sur les pages Hugging Face des datasets avant tout déploiement en production ou publication des résultats.
+
 ### 2.2 Ingestion des données brutes
 
 L'ingestion des quatre datasets est réalisée via un notebook Jupyter dédié (`notebooks/Import_data_from_HuggingFace.ipynb`) qui télécharge chaque source depuis le Hugging Face Hub à l'aide de la bibliothèque `datasets`. Les données brutes sont ensuite persistées sur Google Cloud Storage dans le bucket `gs://p14-medical-data/raw_data/`, organisées par dataset :
@@ -311,7 +323,7 @@ L'utilisation de `lru_cache(maxsize=1)` sur `_get_qwen_tokenizer()` évite de re
 
 #### 2.5.4 Schéma complet du dataset SFT final
 
-Le fichier `data/processed/sft_dataset/sft_dataset.parquet` expose le schéma suivant :
+Les quatre fichiers Parquet produits (`sft_dataset.parquet`, `sft_train.parquet`, `sft_val.parquet`, `sft_test.parquet`) partagent le même schéma :
 
 | Colonne | Type | Présence | Description |
 |---|---|:---:|---|
@@ -343,7 +355,15 @@ sft:
 
 L'algorithme répartit le quota de 5 000 échantillons de manière équitable entre les quatre sources. Pour chaque dataset, le nombre de lignes à prélever est calculé dynamiquement en divisant le quota restant par le nombre de sources restantes à traiter. Si un dataset contient moins de lignes que sa part théorique (cas de FrenchMedMCQA avec ses quelques centaines de lignes nettoyées), l'ensemble de ses données est inclus et le surplus est redistribué aux datasets suivants. Le seed de randomisation (`random_state=42`) assure la reproductibilité de l'échantillonnage.
 
-Le dataset SFT final est sauvegardé en un unique fichier Parquet (`data/processed/sft_dataset/sft_dataset.parquet`). Son schéma complet est décrit en section 2.5.
+Le dataset SFT final est d'abord sauvegardé en intégralité sous `data/processed/sft_dataset/sft_dataset.parquet` (5 000 lignes). Un split stratifié est ensuite appliqué pour produire trois sous-ensembles prêts à l'emploi :
+
+| Fichier | Proportion | Volume (sur 5 000) |
+|---|:---:|:---:|
+| `sft_train.parquet` | 70 % | 3 500 lignes |
+| `sft_val.parquet` | 20 % | 1 000 lignes |
+| `sft_test.parquet` | 10 % | 500 lignes |
+
+La stratification est réalisée sur la colonne `dataset_name` à l'aide de `sklearn.model_selection.train_test_split` — ce qui garantit que chacune des quatre sources (MediQAL, FrenchMedMCQA, MedQuAD, UltraMedical) est représentée dans les mêmes proportions dans chaque split. Les proportions sont pilotées par les paramètres `val_size: 0.2` et `test_size: 0.1` dans `params.yaml`. Le schéma complet de ces quatre fichiers est décrit en section 2.5.
 
 ### 2.7 Versionnement et reproductibilité avec DVC
 
