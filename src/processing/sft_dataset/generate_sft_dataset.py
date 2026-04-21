@@ -1,5 +1,3 @@
-from re import split
-
 import yaml
 
 from config.logger import logger
@@ -7,8 +5,7 @@ from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, SFT_DATASET_DIR
 from src.processing.anonymisation import anonymize_text
 from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples, split_dataset
 
-
-if __name__ == "__main__":
+def main():
     """
     Generate a balanced SFT dataset by sampling from multiple medical datasets.
 
@@ -53,7 +50,12 @@ if __name__ == "__main__":
     output_path = SFT_DATASET_DIR / "sft_dataset.parquet"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sft_dataset.to_parquet(output_path, index=False)
-    X_train, X_val, X_test= split_dataset(sft_dataset, random_state=random_state, val_size=0.2, test_size=0.1)
+    X_train, X_val, X_test= split_dataset(
+        sft_dataset, 
+        random_state=random_state, 
+        val_size=val_size, 
+        test_size=test_size
+        )
     X_train.to_parquet(SFT_DATASET_DIR / "sft_train.parquet", index=False)
     X_val.to_parquet(SFT_DATASET_DIR / "sft_val.parquet", index=False)
     X_test.to_parquet(SFT_DATASET_DIR / "sft_test.parquet", index=False)
@@ -61,3 +63,6 @@ if __name__ == "__main__":
 
     logger.info(f"Successfully saved {len(sft_dataset)} samples to {output_path}")
     logger.info("=" * 60)
+    
+if __name__ == "__main__":
+    main()
