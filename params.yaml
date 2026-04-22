@@ -15,3 +15,25 @@ dpo:
   test_size: 0.1
   source_datasets:
     - ultramed_dataset/ultramed_DPO.parquet
+
+lora_config:
+  r: 16
+  lora_alpha: 32
+  target_modules:
+    - "q_proj"
+    - "v_proj"
+    - "k_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.05
+  task_type: "CAUSAL_LM"
+
+sft_model:
+  model_name: "Qwen/Qwen3-1.7B-Base"
+  system_prompt: "Tu es un agent de triage médical aux urgences du Centre Hospitalier Saint-Aurélien.
+                    Tu collectes les informations cliniques du patient (symptômes, durée, antécédents, constantes vitales) puis tu attribues un niveau d'urgence parmi trois catégories : maximale, modérée ou différée.
+                    En cas de suspicion d'urgence vitale, signale-le immédiatement.
+                    Tu rédiges un bilan synthétique comprenant les symptômes relevés, le niveau d'urgence attribué et les hypothèses diagnostiques.
+                    Réponds en français. Tu assistes le personnel soignant mais ne remplace jamais l'avis d'un médecin."
