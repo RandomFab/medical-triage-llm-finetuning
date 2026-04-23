@@ -2,7 +2,7 @@ from functools import lru_cache
 from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model
 import torch
 
-import yaml
+
 from datasets import Dataset
 import pandas as pd
 from pathlib import Path
@@ -17,9 +17,16 @@ from transformers import (
 from config.logger import logger
 from config.paths import (
     ROOT_MODEL_DIR,
+    SFT_TRAIN_DATASET_PATH,
+    SFT_VAL_DATASET_PATH,
+    SFT_TEST_DATASET_PATH,
 )
-from src import training
-from src.training.utils_training import load_dataset, tokenize_chat, _load_params
+from src.training.utils_training import (
+    _get_qwen_tokenizer,
+    load_dataset,
+    tokenize_chat,
+    _load_params,
+)
 
 
 def transform_ds_from_pandas_to_hf(dataset: pd.DataFrame) -> Dataset:
@@ -67,13 +74,13 @@ def _get_config_training_arguments():
     return params["training_arguments"]
 
 
-def define_training_arguments(output_dir: Path) -> TrainingArguments:
+def define_training_arguments(checkpoint_output_dir: Path) -> TrainingArguments:
 
     logger.info("loading training arguments from params.yaml")
     params_training_args = _get_config_training_arguments()
 
     training_args = TrainingArguments(
-        output_dir=output_dir,
+        output_dir=checkpoint_output_dir,
         per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
         gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
         learning_rate=params_training_args["learning_rate"],
@@ -109,19 +116,25 @@ def _get_model_name():
     params = _load_params()
     return params["sft_model"]["model_name"]
 
+
 @lru_cache(maxsize=1)
 def _get_quantization_config():
     params = _load_params()
     return params["quantization_config"]
 
+
 def define_model():
 
-    quantization_config = _get_quantization_config()  # pour charger la config de quantification dans le cache
+    quantization_config = (
+        _get_quantization_config()
+    )  # pour charger la config de quantification dans le cache
     quantization = BitsAndBytesConfig(
         load_in_4bit=quantization_config["load_in_4bit"],
         bnb_4bit_quant_type=quantization_config["bnb_4bit_quant_type"],
         bnb_4bit_use_double_quant=quantization_config["bnb_4bit_use_double_quant"],
-        bnb_4bit_compute_dtype=getattr(torch, quantization_config["bnb_4bit_compute_dtype"], None),
+        bnb_4bit_compute_dtype=getattr(
+            torch, quantization_config["bnb_4bit_compute_dtype"], None
+        ),
     )
 
     model_name = _get_model_name()  # pour charger le nom du modèle dans le cache
@@ -147,7 +160,7 @@ def define_model():
 
 def train_model(
     training_args: TrainingArguments,
-    model:PeftModel | PeftMixedModel,
+    model: PeftModel | PeftMixedModel,
     train_dataset: Dataset,
     eval_dataset: Dataset,
     data_collator: DataCollatorForLanguageModeling,
@@ -162,7 +175,9 @@ def train_model(
     )
     if str(training_args.output_dir / "checkpoint-last").exists():
         logger.info("Resuming training from last checkpoint...")
-        trainer.train(resume_from_checkpoint=f"{training_args.output_dir}/checkpoint-last")
+        trainer.train(
+            resume_from_checkpoint=f"{training_args.output_dir}/checkpoint-last"
+        )
     else:
         logger.info("Starting training from scratch...")
         trainer.train()
@@ -170,3 +185,35 @@ def train_model(
     trainer.save_model(ROOT_MODEL_DIR / "lora_trained_model")
     logger.info("Model trained successfully")
     return trainer
+
+
+def main():
+    logger.info("Starting SFT training...")
+
+    # === tokenization ===
+    tokenized_train_ds = tokenize_flow(SFT_TRAIN_DATASET_PATH)
+    tokenized_eval_ds = tokenize_flow(SFT_VAL_DATASET_PATH)
+
+    # === data collator ===
+    tokenizer = _get_qwen_tokenizer()
+    data_collator = get_data_collator(tokenizer)
+
+    # === training arguments ===
+    training_args = define_training_arguments(ROOT_MODEL_DIR / "sft_checkpoints")
+
+    # === model definition ===
+    model = define_model()
+
+    # === training ===
+    trainer = train_model(
+        training_args=training_args,
+        model=model,
+        train_dataset=tokenized_train_ds,
+        eval_dataset=tokenized_eval_ds,
+        data_collator=data_collator,
+    )
+
+    logger.info("SFT training completed successfully")
+
+if __name__ == "__main__":
+    main()
