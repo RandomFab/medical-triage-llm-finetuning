@@ -1,4 +1,3 @@
-from idna import decode
 import pandas as pd
 import yaml
 import re
@@ -10,13 +9,8 @@ from config.paths import PARAMS_PATH, PROJECT_ROOT
 # === load dataset functions ===
 def load_dataset(dataset_path: str):
     logger.info(f"Loading dataset from {dataset_path}...")
-    try:
-        dataset = pd.read_parquet(dataset_path)
-        logger.info(f"Dataset loaded successfully from {dataset_path}")
-    except Exception as e:
-        logger.error(f"Error occurred while loading dataset from {dataset_path}: {e}")
-        raise
-
+    dataset = pd.read_parquet(dataset_path)
+    logger.info(f"Dataset loaded successfully from {dataset_path}")
     return dataset
 
 
