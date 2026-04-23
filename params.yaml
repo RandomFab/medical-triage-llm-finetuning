@@ -16,6 +16,12 @@ dpo:
   source_datasets:
     - ultramed_dataset/ultramed_DPO.parquet
 
+quantization_config:
+  load_in_4bit: True
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: True
+  bnb_4bit_quant_type: "nf4"
+
 lora_config:
   r: 16
   lora_alpha: 32
@@ -37,3 +43,22 @@ sft_model:
                     En cas de suspicion d'urgence vitale, signale-le immédiatement.
                     Tu rédiges un bilan synthétique comprenant les symptômes relevés, le niveau d'urgence attribué et les hypothèses diagnostiques.
                     Réponds en français. Tu assistes le personnel soignant mais ne remplace jamais l'avis d'un médecin."
+
+training_arguments:
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 8
+  learning_rate: 2e-4
+  num_train_epochs: 3
+  warmup_steps: 30
+  lr_scheduler_type: "cosine"
+  eval_strategy: "steps"
+  eval_steps: 50
+  save_strategy: "steps"
+  save_steps: 50
+  save_total_limit: 3
+  logging_steps: 10
+  load_best_model_at_end: True
+  bf16: True
+  metric_for_best_model: "eval_loss"
+  greater_is_better: False
+  report_to: "mlflow"

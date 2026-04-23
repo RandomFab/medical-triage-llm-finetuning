@@ -1,10 +1,25 @@
+from functools import lru_cache
+from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model
+import torch
+
+import yaml
 from datasets import Dataset
 import pandas as pd
 from pathlib import Path
+from transformers import (
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+    DataCollatorForLanguageModeling,
+    TrainingArguments,
+    Trainer,
+)
 
 from config.logger import logger
-from config.paths import PARAMS_PATH, PROJECT_ROOT,SFT_TRAIN_DATASET_PATH,SFT_VAL_DATASET_PATH
-from src.training.utils_training import load_dataset, tokenize_chat
+from config.paths import (
+    ROOT_MODEL_DIR,
+)
+from src import training
+from src.training.utils_training import load_dataset, tokenize_chat, _load_params
 
 
 def transform_ds_from_pandas_to_hf(dataset: pd.DataFrame) -> Dataset:
@@ -12,6 +27,7 @@ def transform_ds_from_pandas_to_hf(dataset: pd.DataFrame) -> Dataset:
     hf_dataset = Dataset.from_pandas(dataset)
     logger.info("Dataset transformed successfully to Hugging Face Dataset")
     return hf_dataset
+
 
 def apply_tokenisation(dataset_hf: Dataset) -> Dataset:
     logger.info("Applying tokenization to the dataset...")
@@ -23,6 +39,7 @@ def apply_tokenisation(dataset_hf: Dataset) -> Dataset:
     logger.info("Tokenization applied successfully to the dataset")
     return tokenized_dataset
 
+
 def tokenize_flow(pd_dataset_path: Path) -> Dataset:
     ds_name = pd_dataset_path.stem
     logger.info(f"===== Tokenizing {ds_name} =====")
@@ -30,6 +47,126 @@ def tokenize_flow(pd_dataset_path: Path) -> Dataset:
     pd_dataset = load_dataset(pd_dataset_path)
     hf_dataset = transform_ds_from_pandas_to_hf(pd_dataset)
     tokenized_dataset = apply_tokenisation(hf_dataset)
-    
+
     logger.info(f"===== {ds_name} tokenized successfully =====")
     return tokenized_dataset
+
+
+def get_data_collator(tokenizer):
+    logger.info(f"Generating data collator for language modeling...")
+
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    logger.info("Data collator generated successfully")
+    return data_collator
+
+
+@lru_cache(maxsize=1)
+def _get_config_training_arguments():
+    params = _load_params()
+    return params["training_arguments"]
+
+
+def define_training_arguments(output_dir: Path) -> TrainingArguments:
+
+    logger.info("loading training arguments from params.yaml")
+    params_training_args = _get_config_training_arguments()
+
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
+        gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
+        learning_rate=params_training_args["learning_rate"],
+        num_train_epochs=params_training_args["num_train_epochs"],
+        warmup_steps=params_training_args["warmup_steps"],
+        lr_scheduler_type=params_training_args["lr_scheduler_type"],
+        eval_strategy=params_training_args["eval_strategy"],
+        eval_steps=params_training_args["eval_steps"],
+        save_strategy=params_training_args["save_strategy"],
+        save_steps=params_training_args["save_steps"],
+        save_total_limit=params_training_args["save_total_limit"],
+        logging_steps=params_training_args["logging_steps"],
+        load_best_model_at_end=params_training_args["load_best_model_at_end"],
+        bf16=params_training_args["bf16"],
+        metric_for_best_model=params_training_args["metric_for_best_model"],
+        greater_is_better=params_training_args["greater_is_better"],
+        report_to=params_training_args["report_to"],
+    )
+
+    logger.info("Training arguments defined successfully")
+
+    return training_args
+
+
+@lru_cache(maxsize=1)
+def _get_lora_config():
+    params = _load_params()
+    return params["lora_config"]
+
+
+@lru_cache(maxsize=1)
+def _get_model_name():
+    params = _load_params()
+    return params["sft_model"]["model_name"]
+
+@lru_cache(maxsize=1)
+def _get_quantization_config():
+    params = _load_params()
+    return params["quantization_config"]
+
+def define_model():
+
+    quantization_config = _get_quantization_config()  # pour charger la config de quantification dans le cache
+    quantization = BitsAndBytesConfig(
+        load_in_4bit=quantization_config["load_in_4bit"],
+        bnb_4bit_quant_type=quantization_config["bnb_4bit_quant_type"],
+        bnb_4bit_use_double_quant=quantization_config["bnb_4bit_use_double_quant"],
+        bnb_4bit_compute_dtype=getattr(torch, quantization_config["bnb_4bit_compute_dtype"], None),
+    )
+
+    model_name = _get_model_name()  # pour charger le nom du modèle dans le cache
+    model_4bit = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=quantization,
+        dtype="auto",
+        device_map="auto",
+    )
+
+    config = _get_lora_config()
+    lora_config = LoraConfig(
+        task_type=config["task_type"],
+        r=config["r"],
+        lora_alpha=config["lora_alpha"],
+        lora_dropout=config["lora_dropout"],
+        target_modules=config["target_modules"],
+    )
+
+    model = get_peft_model(model_4bit, lora_config)
+    return model
+
+
+def train_model(
+    training_args: TrainingArguments,
+    model:PeftModel | PeftMixedModel,
+    train_dataset: Dataset,
+    eval_dataset: Dataset,
+    data_collator: DataCollatorForLanguageModeling,
+) -> Trainer:
+    logger.info("Training model...")
+    trainer = Trainer(
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        model=model,
+        args=training_args,
+        data_collator=data_collator,
+    )
+    if str(training_args.output_dir / "checkpoint-last").exists():
+        logger.info("Resuming training from last checkpoint...")
+        trainer.train(resume_from_checkpoint=f"{training_args.output_dir}/checkpoint-last")
+    else:
+        logger.info("Starting training from scratch...")
+        trainer.train()
+
+    trainer.save_model(ROOT_MODEL_DIR / "lora_trained_model")
+    logger.info("Model trained successfully")
+    return trainer

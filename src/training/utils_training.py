@@ -33,13 +33,17 @@ def _get_qwen_tokenizer():
 
 
 @lru_cache(maxsize=1)
+def _load_params():
+    with open(PARAMS_PATH, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+@lru_cache(maxsize=1)
 def _get_system_prompt():
     """Chargé une seule fois par process (lru_cache)."""
 
     logger.info("Loading system prompt...")
 
-    with open(PARAMS_PATH, encoding="utf-8") as f:
-        params = yaml.safe_load(f)
+    params = _load_params()
     system_prompt = params["sft_model"]["system_prompt"]
 
     logger.info(f"System prompt loaded successfully: {system_prompt}")
