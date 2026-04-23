@@ -1,7 +1,7 @@
 from functools import lru_cache
 from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model
 import torch
-
+import os
 
 from datasets import Dataset
 import pandas as pd
@@ -173,10 +173,12 @@ def train_model(
         args=training_args,
         data_collator=data_collator,
     )
-    if str(training_args.output_dir / "checkpoint-last").exists():
+
+    checkpoint_path = f"{training_args.output_dir}/checkpoint-last"
+    if os.path.exists(checkpoint_path):
         logger.info("Resuming training from last checkpoint...")
         trainer.train(
-            resume_from_checkpoint=f"{training_args.output_dir}/checkpoint-last"
+            resume_from_checkpoint=checkpoint_path,
         )
     else:
         logger.info("Starting training from scratch...")
