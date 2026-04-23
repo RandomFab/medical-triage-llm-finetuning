@@ -43,9 +43,15 @@ def clean_ultramed_for_SFT(df: pd.DataFrame) -> pd.DataFrame:
     df["question"] = df["question"].str.lower()
     df["answer"] = df["answer"].str.lower()
 
-    # Step 4: Add dataset name column
-    logger.debug("Step 4: Adding dataset name column")
-    df["dataset_name"] = "ultramed"
+    # Step 4: Add metadata
+    logger.debug("Step 4: Adding metadata")
+    df = add_metadata(
+        df,
+        language="en",
+        question_type="conversational",
+        confidence_level="low",
+        dataset_name="ultramed"
+    )
 
     return df
 

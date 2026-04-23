@@ -113,7 +113,8 @@ def merge_clinical_case_and_question(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame: A DataFrame with the merged 'question' column.
     """
     logger.debug("Merging 'clinical_case' and 'question' columns")
-    df["question"] = df["clinical_case"] + " " + df["question"]
+    mask = df["clinical_case"].notna()
+    df.loc[mask, "question"] = df.loc[mask, "clinical_case"] + " " + df.loc[mask, "question"]
     return df
 
 def erase_non_essential_text_(df: pd.DataFrame) -> pd.DataFrame:
