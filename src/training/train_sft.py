@@ -1,5 +1,5 @@
 from functools import lru_cache
-from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model
+from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model,prepare_model_for_kbit_training
 import torch
 import os
 
@@ -96,6 +96,10 @@ def define_training_arguments(checkpoint_output_dir: Path) -> TrainingArguments:
         logging_steps=params_training_args["logging_steps"],
         load_best_model_at_end=params_training_args["load_best_model_at_end"],
         bf16=params_training_args["bf16"],
+        fp16=params_training_args["fp16"],                                            # ← ajouté
+        gradient_checkpointing=params_training_args["gradient_checkpointing"],        # ← ajouté
+        gradient_checkpointing_kwargs=params_training_args["gradient_checkpointing_kwargs"],  # ← ajouté
+        optim=params_training_args["optim"],                                          # ← ajouté
         metric_for_best_model=params_training_args["metric_for_best_model"],
         greater_is_better=params_training_args["greater_is_better"],
         report_to=params_training_args["report_to"],
@@ -126,9 +130,7 @@ def _get_quantization_config():
 
 def define_model():
 
-    quantization_config = (
-        _get_quantization_config()
-    )  # pour charger la config de quantification dans le cache
+    quantization_config = _get_quantization_config()
     quantization = BitsAndBytesConfig(
         load_in_4bit=quantization_config["load_in_4bit"],
         bnb_4bit_quant_type=quantization_config["bnb_4bit_quant_type"],
@@ -138,11 +140,19 @@ def define_model():
         ),
     )
 
-    model_name = _get_model_name()  # pour charger le nom du modèle dans le cache
+    model_name = _get_model_name()
     model_4bit = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=quantization,
         device_map="auto",
+    )
+
+    # ← ajouté : cast des layer norms en fp32, désactivation du KV cache,
+    #   activation de input_require_grads pour le gradient checkpointing
+    model_4bit = prepare_model_for_kbit_training(
+        model_4bit,
+        use_gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
     )
 
     config = _get_lora_config()
@@ -156,7 +166,6 @@ def define_model():
 
     model = get_peft_model(model_4bit, lora_config)
     return model
-
 
 def train_model(
     training_args: TrainingArguments,

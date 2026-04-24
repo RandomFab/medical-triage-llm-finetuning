@@ -16,11 +16,6 @@ dpo:
   source_datasets:
     - ultramed_dataset/ultramed_DPO.parquet
 
-quantization_config:
-  load_in_4bit: True
-  bnb_4bit_compute_dtype: "bfloat16"
-  bnb_4bit_use_double_quant: True
-  bnb_4bit_quant_type: "nf4"
 
 lora_config:
   r: 16
@@ -45,9 +40,15 @@ sft_model:
                     Réponds en français. Tu assistes le personnel soignant mais ne remplace jamais l'avis d'un médecin."
   max_length: 512
 
+quantization_config:
+  load_in_4bit: True
+  bnb_4bit_compute_dtype: "float16"          # ← changé (était bfloat16)
+  bnb_4bit_use_double_quant: True
+  bnb_4bit_quant_type: "nf4"
+
 training_arguments:
-  per_device_train_batch_size: 4
-  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 1             # ← changé (était 4)
+  gradient_accumulation_steps: 32            # ← changé (était 8) — effective batch = 1×32 = 32, identique à avant
   learning_rate: 2e-4
   num_train_epochs: 3
   warmup_steps: 30
@@ -59,7 +60,12 @@ training_arguments:
   save_total_limit: 3
   logging_steps: 10
   load_best_model_at_end: True
-  bf16: True
+  bf16: False                                # ← changé (était True)
+  fp16: True                                 # ← ajouté
+  gradient_checkpointing: True               # ← ajouté
+  gradient_checkpointing_kwargs:             # ← ajouté
+    use_reentrant: False
+  optim: "paged_adamw_8bit"                  # ← ajouté
   metric_for_best_model: "eval_loss"
   greater_is_better: False
   report_to: "mlflow"
