@@ -13,6 +13,7 @@ from transformers import (
     TrainingArguments,
     Trainer,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 from config.logger import logger
 from config.paths import (
@@ -174,12 +175,13 @@ def train_model(
         data_collator=data_collator,
     )
 
-    checkpoint_path = f"{training_args.output_dir}/checkpoint-last"
-    if os.path.exists(checkpoint_path):
-        logger.info("Resuming training from last checkpoint...")
-        trainer.train(
-            resume_from_checkpoint=checkpoint_path,
-        )
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir):
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+
+    if last_checkpoint is not None:
+        logger.info(f"Resuming training from {last_checkpoint}")
+        trainer.train(resume_from_checkpoint=last_checkpoint)
     else:
         logger.info("Starting training from scratch...")
         trainer.train()
