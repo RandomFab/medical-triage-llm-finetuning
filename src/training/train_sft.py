@@ -9,7 +9,7 @@ from pathlib import Path
 from transformers import (
     AutoModelForCausalLM,
     BitsAndBytesConfig,
-    DataCollatorForLanguageModeling,
+    DataCollatorForSeq2Seq,
     TrainingArguments,
     Trainer,
 )
@@ -61,9 +61,9 @@ def tokenize_flow(pd_dataset_path: Path) -> Dataset:
 
 
 def get_data_collator(tokenizer):
-    logger.info(f"Generating data collator for language modeling...")
+    logger.info(f"Generating data collator for sequence-to-sequence...")
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
 
     logger.info("Data collator generated successfully")
     return data_collator
@@ -164,7 +164,7 @@ def train_model(
     model: PeftModel | PeftMixedModel,
     train_dataset: Dataset,
     eval_dataset: Dataset,
-    data_collator: DataCollatorForLanguageModeling,
+    data_collator: DataCollatorForSeq2Seq,
 ) -> Trainer:
     logger.info("Training model...")
     trainer = Trainer(
@@ -218,6 +218,7 @@ def main():
     )
 
     logger.info("SFT training completed successfully")
+
 
 if __name__ == "__main__":
     main()
