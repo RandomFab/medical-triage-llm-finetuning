@@ -84,7 +84,7 @@ def define_training_arguments(checkpoint_output_dir: Path) -> TrainingArguments:
         output_dir=checkpoint_output_dir,
         per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
         gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
-        learning_rate=params_training_args["learning_rate"],
+        learning_rate=float(params_training_args["learning_rate"]),
         num_train_epochs=params_training_args["num_train_epochs"],
         warmup_steps=params_training_args["warmup_steps"],
         lr_scheduler_type=params_training_args["lr_scheduler_type"],
