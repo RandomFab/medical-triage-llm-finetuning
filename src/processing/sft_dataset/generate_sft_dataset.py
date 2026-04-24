@@ -1,7 +1,7 @@
 import yaml
 
 from config.logger import logger
-from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, SFT_DATASET_DIR
+from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, SFT_DATASET_DIR,SFT_TEST_DATASET_PATH, SFT_TRAIN_DATASET_PATH, SFT_VAL_DATASET_PATH
 from src.processing.anonymisation import anonymize_text
 from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples, split_dataset
 
@@ -56,9 +56,9 @@ def main():
         val_size=val_size, 
         test_size=test_size
         )
-    X_train.to_parquet(SFT_DATASET_DIR / "sft_train.parquet", index=False)
-    X_val.to_parquet(SFT_DATASET_DIR / "sft_val.parquet", index=False)
-    X_test.to_parquet(SFT_DATASET_DIR / "sft_test.parquet", index=False)
+    X_train.to_parquet(SFT_TRAIN_DATASET_PATH, index=False)
+    X_val.to_parquet(SFT_VAL_DATASET_PATH, index=False)
+    X_test.to_parquet(SFT_TEST_DATASET_PATH, index=False)
 
 
     logger.info(f"Successfully saved {len(sft_dataset)} samples to {output_path}")

@@ -1,7 +1,7 @@
 import yaml
 
 from config.logger import logger
-from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, DPO_DATASET_DIR
+from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, DPO_DATASET_DIR, DPO_TEST_DATASET_PATH, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
 from src.processing.anonymisation import anonymize_text
 from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples, split_dataset
 
@@ -57,9 +57,9 @@ def main():
         val_size=val_size, 
         test_size=test_size
         )
-    X_train.to_parquet(DPO_DATASET_DIR / "dpo_train.parquet", index=False)
-    X_val.to_parquet(DPO_DATASET_DIR / "dpo_val.parquet", index=False)
-    X_test.to_parquet(DPO_DATASET_DIR / "dpo_test.parquet", index=False)
+    X_train.to_parquet(DPO_TRAIN_DATASET_PATH, index=False)
+    X_val.to_parquet(DPO_VAL_DATASET_PATH, index=False)
+    X_test.to_parquet(DPO_TEST_DATASET_PATH, index=False)
 
     logger.info(f"Successfully saved {len(dpo_dataset)} samples to {output_path}")
     logger.info("=" * 60)
