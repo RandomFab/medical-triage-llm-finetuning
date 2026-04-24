@@ -142,7 +142,6 @@ def define_model():
     model_4bit = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=quantization,
-        dtype="auto",
         device_map="auto",
     )
 
