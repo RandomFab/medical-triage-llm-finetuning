@@ -101,14 +101,15 @@ def format_qwen_prompt(question: str) -> str: # → fonction de debuggage : perm
 # === tokenization functions for Qwen ===
 def tokenize_chat(question: str, answer: str) -> dict:
     tokenizer = _get_qwen_tokenizer()
+    max_length = _get_max_length()
 
     chat_text = format_qwen_chat(question, answer)
     prompt_text = format_qwen_prompt(question)
 
-    input_ids = tokenizer.encode(chat_text)
+    input_ids = tokenizer.encode(chat_text, truncation=True, max_length=max_length)
     prompt_ids = tokenizer.encode(prompt_text)
 
-    idx = len(prompt_ids)
+    idx = min(len(prompt_ids), len(input_ids))
 
     labels = input_ids.copy()
     labels[:idx] = [-100] * idx
