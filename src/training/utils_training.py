@@ -50,6 +50,18 @@ def _get_system_prompt():
 
     return system_prompt
 
+@lru_cache(maxsize=1)
+def _get_max_length():
+    """Chargé une seule fois par process (lru_cache)."""
+
+    logger.info("Loading max length...")
+
+    params = _load_params()
+    max_length = params["sft_model"]["max_length"]
+
+    logger.info(f"Max length loaded successfully: {max_length}")
+
+    return max_length
 
 
 def _clean_thinking_markers(text: str) -> str:
@@ -82,7 +94,7 @@ def format_qwen_prompt(question: str) -> str: # → fonction de debuggage : perm
         {"role": "user", "content": question},
     ]
     return  _clean_thinking_markers(
-        _apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
+        _apply_chat_template(chat, add_generation_prompt=True, tokenize=False, max_length=params["sft_model"]["max_length"])
     )
 
 
