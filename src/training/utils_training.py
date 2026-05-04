@@ -1,6 +1,8 @@
 import pandas as pd
 import yaml
 import re
+import mlflow
+import torch
 
 from config.logger import logger
 from config.paths import PARAMS_PATH, PROJECT_ROOT
@@ -128,6 +130,53 @@ def decode_token(token_id: int) -> str: # → fonction de debuggage : permet de 
 
     return decoded_text
 
+
+# === MLflow helpers ===
+
+def _get_gpu_name() -> str:
+    if torch.cuda.is_available():
+        raw = torch.cuda.get_device_name(0)
+        # "Tesla T4" → "T4", "NVIDIA A100-SXM4-40GB" → "A100"
+        for known in ("T4", "A100", "A10G", "V100", "L4", "H100", "3090", "4090"):
+            if known in raw:
+                return known
+        return raw.split()[-1]
+    return "cpu"
+
+
+def setup_mlflow_run(stage: str) -> mlflow.ActiveRun:
+    """Démarre un run MLflow nommé et taggé à partir de params.yaml.
+
+    À appeler en début de main() avant le Trainer (qui réutilisera le run actif).
+    stage : "sft" | "dpo"
+    """
+    params = _load_params()
+    lora = params["lora_config"]
+    quant = params["quantization_config"]
+    train_args = params["training_arguments"]
+    model_name: str = params["sft_model"]["model_name"]   # "Qwen/Qwen3-1.7B-Base"
+
+    short_model = model_name.split("/")[-1].lower()       # "qwen3-1.7b-base"
+    dtype = "fp16" if train_args.get("fp16") else "bf16"
+    gpu = _get_gpu_name()
+
+    run_name = f"{stage}_{short_model}_qlora_r{lora['r']}_{dtype}_{gpu}"
+
+    tags = {
+        "stage":         stage,
+        "model":         model_name,
+        "method":        "QLoRA",
+        "hardware":      gpu,
+        "quantization":  f"4bit-{quant['bnb_4bit_quant_type']}-{dtype}",
+        "lora_r":        str(lora["r"]),
+        "lora_alpha":    str(lora["lora_alpha"]),
+        "epochs":        str(train_args["num_train_epochs"]),
+        "learning_rate": str(train_args["learning_rate"]),
+        "dataset_size":  str(params[stage]["target_samples"]),
+    }
+
+    logger.info(f"Starting MLflow run: {run_name}")
+    return mlflow.start_run(run_name=run_name, tags=tags)
 
 
 if __name__ == "__main__":

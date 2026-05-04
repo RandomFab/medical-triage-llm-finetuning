@@ -27,6 +27,7 @@ from src.training.utils_training import (
     load_dataset,
     tokenize_chat,
     _load_params,
+    setup_mlflow_run,
 )
 
 
@@ -202,28 +203,30 @@ def train_model(
 def main():
     logger.info("Starting SFT training...")
 
-    # === tokenization ===
-    tokenized_train_ds = tokenize_flow(SFT_TRAIN_DATASET_PATH)
-    tokenized_eval_ds = tokenize_flow(SFT_VAL_DATASET_PATH)
+    with setup_mlflow_run(stage="sft"):
 
-    # === data collator ===
-    tokenizer = _get_qwen_tokenizer()
-    data_collator = get_data_collator(tokenizer)
+        # === tokenization ===
+        tokenized_train_ds = tokenize_flow(SFT_TRAIN_DATASET_PATH)
+        tokenized_eval_ds = tokenize_flow(SFT_VAL_DATASET_PATH)
 
-    # === training arguments ===
-    training_args = define_training_arguments(ROOT_MODEL_DIR / "sft_checkpoints")
+        # === data collator ===
+        tokenizer = _get_qwen_tokenizer()
+        data_collator = get_data_collator(tokenizer)
 
-    # === model definition ===
-    model = define_model()
+        # === training arguments ===
+        training_args = define_training_arguments(ROOT_MODEL_DIR / "sft_checkpoints")
 
-    # === training ===
-    trainer = train_model(
-        training_args=training_args,
-        model=model,
-        train_dataset=tokenized_train_ds,
-        eval_dataset=tokenized_eval_ds,
-        data_collator=data_collator,
-    )
+        # === model definition ===
+        model = define_model()
+
+        # === training ===
+        train_model(
+            training_args=training_args,
+            model=model,
+            train_dataset=tokenized_train_ds,
+            eval_dataset=tokenized_eval_ds,
+            data_collator=data_collator,
+        )
 
     logger.info("SFT training completed successfully")
 
