@@ -388,7 +388,392 @@ Les données produites sont synchronisées avec un remote GCS (`gs://p14-medical
 
 ## 3. Fine-tuning supervisé (SFT) avec LoRA
 
-*[À compléter — Semaine 2]*
+L'objectif de cette phase est de spécialiser le modèle de base Qwen3-1.7B sur le domaine médical en lui apprenant à produire des réponses structurées à partir de questions cliniques. Le fine-tuning supervisé (SFT) consiste à entraîner le modèle sur les 3 500 paires `(question, answer)` du jeu d'entraînement constitué en section 2.6, en utilisant la technique LoRA pour limiter l'empreinte mémoire et le risque de dégradation des connaissances générales du modèle.
+
+Cette section détaille l'ensemble des choix techniques effectués, depuis la quantification du modèle de base jusqu'aux résultats de l'entraînement.
+
+### 3.1 Choix du modèle de base
+
+Le modèle retenu pour le POC est **Qwen3-1.7B-Base** (`Qwen/Qwen3-1.7B-Base`), un modèle de langage causal (CLM) développé par l'équipe Qwen d'Alibaba. Ce choix repose sur trois critères principaux :
+
+**Compacité.** Avec 1,7 milliard de paramètres, le modèle est suffisamment léger pour être entraîné et servi sur des GPU grand public (NVIDIA T4 avec 16 Go de VRAM). Dans le cadre d'un POC dont l'objectif est de valider la faisabilité technique, un modèle compact permet d'itérer rapidement sur les hyperparamètres sans mobiliser d'infrastructure coûteuse.
+
+**Architecture moderne.** Qwen3 intègre les avancées récentes des architectures transformer : Grouped Query Attention (GQA) pour une inférence plus efficace, RoPE (Rotary Position Embeddings) pour une meilleure gestion des positions, et un vocabulaire étendu à 151 936 tokens couvrant les langues latines et asiatiques — un atout pour notre corpus bilingue FR/EN.
+
+**Chat template natif.** Le modèle dispose d'un format de conversation structuré (`<|im_start|>system`, `<|im_start|>user`, `<|im_start|>assistant`) qui s'aligne directement avec le cas d'usage de l'agent de triage : un échange entre un patient (rôle `user`) et l'agent (rôle `assistant`), guidé par un prompt système définissant le comportement clinique attendu.
+
+Le cahier des charges prévoit, en cas de validation concluante du POC, un passage à des modèles de plus grande envergure (32B+ paramètres). L'architecture modulaire mise en place — LoRA, quantification, chat template externalisé — est conçue pour faciliter cette transition sans refonte majeure du code.
+
+### 3.2 Quantification 4-bit avec BitsAndBytes
+
+Le modèle de base Qwen3-1.7B pèse environ 3,4 Go en précision FP16. Pour permettre l'entraînement sur un GPU NVIDIA T4 (16 Go VRAM) tout en conservant suffisamment de mémoire pour les gradients, les activations et l'optimiseur, le modèle est chargé en précision 4-bit à l'aide de la bibliothèque **BitsAndBytes**.
+
+La configuration de quantification, externalisée dans `params.yaml`, est la suivante :
+
+```yaml
+quantization_config:
+  load_in_4bit: True
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: True
+  bnb_4bit_quant_type: "nf4"
+```
+
+**`load_in_4bit: True`** — Active la quantification 4-bit lors du chargement du modèle. Chaque poids, initialement stocké sur 16 bits (2 octets), est compressé sur 4 bits (0,5 octet), divisant l'empreinte mémoire par un facteur d'environ 4. Le modèle quantifié occupe approximativement 0,85 Go au lieu de 3,4 Go.
+
+**`bnb_4bit_quant_type: "nf4"`** — Sélectionne le type de quantification NormalFloat 4 bits (NF4). Ce format, introduit par l'article QLoRA (Dettmers et al., 2023), est spécifiquement optimisé pour les poids de réseaux de neurones dont la distribution suit approximativement une loi normale. Les 16 niveaux de quantification sont répartis de manière non-uniforme, concentrés autour de zéro où se trouvent la majorité des poids, ce qui minimise l'erreur de quantification par rapport à un codage uniforme classique (FP4 ou INT4).
+
+**`bnb_4bit_use_double_quant: True`** — Active la double quantification. Les constantes de quantification (une par bloc de 64 poids) sont elles-mêmes quantifiées en 8 bits, ce qui réduit l'empreinte mémoire supplémentaire liée aux métadonnées de quantification d'environ 0,37 bit par paramètre. Sur 1,7 milliard de paramètres, cette économie représente environ 79 Mo.
+
+**`bnb_4bit_compute_dtype: "float16"`** — Définit la précision de calcul pour les opérations matricielles. Bien que les poids soient stockés en 4-bit, ils sont décompressés à la volée en FP16 pour chaque forward pass. Ce choix représente un compromis : FP16 offre une plage dynamique suffisante pour le fine-tuning tout en étant nativement supporté par les Tensor Cores de la T4. L'alternative BFloat16 (BF16) aurait été préférable pour sa meilleure stabilité numérique sur les grandes valeurs, mais le GPU T4 ne la supporte pas matériellement.
+
+La quantification est appliquée lors du chargement du modèle dans la fonction `define_model()` :
+
+```python
+quantization = BitsAndBytesConfig(
+    load_in_4bit=quantization_config["load_in_4bit"],
+    bnb_4bit_quant_type=quantization_config["bnb_4bit_quant_type"],
+    bnb_4bit_use_double_quant=quantization_config["bnb_4bit_use_double_quant"],
+    bnb_4bit_compute_dtype=getattr(torch, quantization_config["bnb_4bit_compute_dtype"]),
+)
+
+model_4bit = AutoModelForCausalLM.from_pretrained(
+    model_name, quantization_config=quantization, device_map="auto",
+)
+```
+
+La conversion du type de données depuis la chaîne YAML (`"float16"`) vers l'objet PyTorch (`torch.float16`) est réalisée dynamiquement via `getattr(torch, ...)`, ce qui permet de changer la précision de calcul sans modifier le code.
+
+Après chargement, le modèle est préparé pour l'entraînement en précision réduite via `prepare_model_for_kbit_training()`. Cette fonction de la bibliothèque PEFT réalise trois opérations essentielles : elle convertit les couches de normalisation (LayerNorm) en FP32 pour préserver la stabilité numérique lors de la rétropropagation, elle désactive le cache clé-valeur (KV cache) qui n'est pas compatible avec le gradient checkpointing, et elle active `input_require_grads` sur le modèle pour permettre le calcul des gradients à travers les couches gelées jusqu'aux adaptateurs LoRA.
+
+### 3.3 Adaptation par LoRA
+
+Le fine-tuning classique consiste à mettre à jour l'intégralité des poids du modèle lors de l'entraînement. Pour un modèle de 1,7 milliard de paramètres, cela nécessite de stocker en mémoire non seulement les poids eux-mêmes, mais aussi leurs gradients et les états de l'optimiseur (deux tenseurs supplémentaires par paramètre pour Adam), ce qui multiplie l'empreinte mémoire par un facteur 3 à 4. Cette approche est incompatible avec les contraintes GPU du POC.
+
+La technique **LoRA** (Low-Rank Adaptation, Hu et al., 2021) propose une alternative : au lieu de modifier directement les matrices de poids du modèle, elle injecte à côté de chaque matrice ciblée deux petites matrices (appelées adaptateurs) dont le produit représente une correction de faible rang. Pendant l'entraînement, seuls ces adaptateurs sont mis à jour tandis que les poids originaux restent gelés. L'économie mémoire est considérable : seuls les paramètres des adaptateurs nécessitent des gradients et des états d'optimiseur.
+
+La configuration LoRA, externalisée dans `params.yaml`, est la suivante :
+
+```yaml
+lora_config:
+  r: 16
+  lora_alpha: 32
+  target_modules:
+    - "q_proj"
+    - "v_proj"
+    - "k_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.05
+  task_type: "CAUSAL_LM"
+```
+
+**`r: 16`** — Le rang des matrices d'adaptation. Ce paramètre contrôle la capacité expressive des adaptateurs : un rang plus élevé permet de capturer des adaptations plus complexes, mais augmente le nombre de paramètres entraînables et le risque de surapprentissage. Avec `r=16`, chaque adaptateur se compose de deux matrices : une de taille `(d × 16)` et une de taille `(16 × d)`, où `d` est la dimension de la matrice de poids originale. Pour Qwen3-1.7B (`d=2048` pour les couches d'attention), cela représente `2 × 2048 × 16 = 65 536` paramètres par module ciblé, contre `2048 × 2048 = 4 194 304` paramètres pour la matrice originale — soit une réduction d'un facteur 64.
+
+**`lora_alpha: 32`** — Le facteur de mise à l'échelle de la correction LoRA. La correction appliquée aux poids originaux est multipliée par le ratio `alpha / r = 32 / 16 = 2`. Ce ratio contrôle l'intensité avec laquelle les adaptateurs influencent les sorties du modèle. Un ratio de 2 est un choix courant dans la littérature, offrant un équilibre entre capacité d'adaptation et stabilité de l'entraînement. Un ratio trop élevé risquerait de déstabiliser les représentations apprises par le modèle pré-entraîné ; un ratio trop faible limiterait la capacité du modèle à se spécialiser sur le domaine médical.
+
+**`target_modules`** — Les sept modules ciblés couvrent l'intégralité des projections linéaires de chaque couche transformer de Qwen3 :
+- Couches d'attention : `q_proj` (requêtes), `k_proj` (clés), `v_proj` (valeurs), `o_proj` (projection de sortie) — ces quatre projections contrôlent la manière dont le modèle sélectionne et combine l'information contextuelle.
+- Couches MLP (réseau feed-forward) : `gate_proj`, `up_proj`, `down_proj` — ces trois projections contrôlent la transformation non-linéaire appliquée à chaque position après l'attention.
+
+Le choix de cibler à la fois les couches d'attention et le MLP, plutôt que les seules couches d'attention (choix courant dans les premières implémentations LoRA), se justifie par les travaux récents montrant que l'inclusion du MLP améliore significativement la qualité du fine-tuning, notamment sur des tâches de génération de texte. Pour un modèle compact comme Qwen3-1.7B, chaque couche porte proportionnellement plus de responsabilité dans la représentation des connaissances — il est donc important d'adapter l'ensemble des projections linéaires.
+
+**`lora_dropout: 0.05`** — Un dropout de 5% est appliqué sur les adaptateurs LoRA pendant l'entraînement. Ce mécanisme de régularisation désactive aléatoirement 5% des neurones des adaptateurs à chaque forward pass, ce qui réduit le risque de surapprentissage sur le dataset de 3 500 exemples.
+
+**`task_type: "CAUSAL_LM"`** — Indique à PEFT que le modèle est utilisé en mode de modélisation causale du langage (prédiction du token suivant), ce qui conditionne la configuration interne des adaptateurs.
+
+L'application de LoRA au modèle quantifié est réalisée via la bibliothèque PEFT :
+
+```python
+lora_config = LoraConfig(
+    task_type=config["task_type"],
+    r=config["r"],
+    lora_alpha=config["lora_alpha"],
+    lora_dropout=config["lora_dropout"],
+    target_modules=config["target_modules"],
+)
+model = get_peft_model(model_4bit, lora_config)
+```
+
+La combinaison de la quantification 4-bit (section 3.2) et de LoRA constitue la technique communément appelée **QLoRA** (Quantized LoRA). Le modèle de base reste en 4-bit en mémoire, seuls les adaptateurs LoRA sont stockés et mis à jour en précision complète. Cette approche permet d'entraîner un modèle de 1,7 milliard de paramètres sur un GPU T4 de 16 Go, ce qui aurait été impossible en fine-tuning classique.
+
+### 3.4 Formatage des données pour le SFT
+
+Le fine-tuning supervisé d'un modèle conversationnel nécessite de formater chaque paire `(question, answer)` selon le **chat template** spécifique au modèle. Ce formatage structure l'échange en rôles (`system`, `user`, `assistant`) et encadre chaque tour de parole par des tokens spéciaux que le modèle a appris à reconnaître lors de son pré-entraînement.
+
+#### 3.4.1 Prompt système
+
+Un prompt système a été rédigé pour définir le comportement attendu de l'agent de triage. Ce prompt est injecté au début de chaque conversation d'entraînement, dans le rôle `system` :
+
+```
+Tu es un agent de triage médical aux urgences du Centre Hospitalier Saint-Aurélien.
+Tu collectes les informations cliniques du patient (symptômes, durée, antécédents, 
+constantes vitales) puis tu attribues un niveau d'urgence parmi trois catégories : 
+maximale, modérée ou différée.
+En cas de suspicion d'urgence vitale, signale-le immédiatement.
+Tu rédiges un bilan synthétique comprenant les symptômes relevés, le niveau d'urgence 
+attribué et les hypothèses diagnostiques.
+Réponds en français. Tu assistes le personnel soignant mais ne remplace jamais l'avis 
+d'un médecin.
+```
+
+Ce prompt remplit plusieurs fonctions. Il ancre le modèle dans son rôle hospitalier, ce qui conditionne le registre de langue et le niveau de détail des réponses. Il définit la structure attendue de la réponse (bilan synthétique avec symptômes, niveau d'urgence, hypothèses). Il rappelle la contrainte de langue (français). Et il pose le garde-fou éthique fondamental : l'agent assiste mais ne remplace pas le médecin.
+
+Le prompt système est externalisé dans `params.yaml` (section `sft_model.system_prompt`) pour permettre son ajustement sans modification du code.
+
+#### 3.4.2 Chat template Qwen3
+
+Chaque paire du dataset est convertie en une séquence de conversation structurée à l'aide du tokenizer de Qwen3. La fonction `format_qwen_chat()` dans `utils_training.py` construit la conversation complète :
+
+```python
+def format_qwen_chat(question: str, answer: str) -> str:
+    system_prompt = _get_system_prompt()
+    chat = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+        {"role": "assistant", "content": answer},
+    ]
+    return _clean_thinking_markers(
+        _apply_chat_template(chat, add_generation_prompt=False, tokenize=False)
+    )
+```
+
+Le résultat est une séquence textuelle de la forme :
+
+```
+<|im_start|>system
+Tu es un agent de triage médical...<|im_end|>
+<|im_start|>user
+[question du dataset]<|im_end|>
+<|im_start|>assistant
+[réponse du dataset]<|im_end|>
+```
+
+La fonction `_clean_thinking_markers()` supprime les balises `<think>...</think>` que le modèle Qwen3 peut insérer dans ses réponses. Ces balises, utilisées par le modèle pour son raisonnement interne, ne doivent pas apparaître dans les données d'entraînement SFT car elles pollueraient le signal d'apprentissage.
+
+Une seconde fonction, `format_qwen_prompt()`, génère uniquement la partie "prompt" (système + question) sans la réponse, avec le paramètre `add_generation_prompt=True` qui ajoute le marqueur `<|im_start|>assistant\n` indiquant au modèle qu'il doit commencer à générer. Cette fonction est utilisée pour calculer la frontière entre le prompt et la réponse lors du masquage des labels.
+
+#### 3.4.3 Masquage des labels
+
+Le masquage des labels est une étape critique du formatage SFT. Lors de l'entraînement, le modèle reçoit la séquence complète (prompt + réponse) et doit apprendre à prédire chaque token. Cependant, le modèle ne doit être évalué (et pénalisé par la loss) que sur les tokens de la **réponse**, pas sur ceux du prompt. En effet, le prompt (système + question) est une entrée fournie par l'utilisateur — le modèle n'a pas à apprendre à le prédire.
+
+Le mécanisme de masquage est implémenté dans la fonction `tokenize_chat()` :
+
+```python
+def tokenize_chat(question: str, answer: str) -> dict:
+    tokenizer = _get_qwen_tokenizer()
+    max_length = _get_max_length()
+
+    chat_text = format_qwen_chat(question, answer)
+    prompt_text = format_qwen_prompt(question)
+
+    input_ids = tokenizer.encode(chat_text, truncation=True, max_length=max_length)
+    prompt_ids = tokenizer.encode(prompt_text)
+
+    idx = min(len(prompt_ids), len(input_ids))
+
+    labels = input_ids.copy()
+    labels[:idx] = [-100] * idx
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": [1] * len(input_ids),
+        "labels": labels,
+    }
+```
+
+La logique est la suivante : la séquence complète est d'abord encodée en `input_ids`. Puis le prompt seul est encodé pour déterminer sa longueur en tokens (`idx`). Enfin, les labels correspondant au prompt sont remplacés par la valeur sentinelle **-100**, qui indique à la fonction de loss de PyTorch (`CrossEntropyLoss`) d'ignorer ces positions.
+
+Le résultat est un triplet de tenseurs :
+- **`input_ids`** : la séquence complète encodée (prompt + réponse), tronquée à `max_length=512` tokens.
+- **`attention_mask`** : un masque binaire de `1` sur toute la longueur, indiquant que chaque token est valide (le padding sera géré par le DataCollator).
+- **`labels`** : une copie des `input_ids` avec les positions du prompt remplacées par `-100`, de sorte que la loss ne soit calculée que sur la partie réponse.
+
+La longueur maximale de 512 tokens (`sft_model.max_length` dans `params.yaml`) a été choisie comme compromis entre la couverture du contenu (la médiane des séquences complètes se situe bien en dessous de cette limite d'après les colonnes `token_count_*` du dataset) et l'empreinte mémoire par séquence.
+
+### 3.5 Pipeline de tokenisation
+
+La tokenisation des données suit un pipeline en trois étapes, encapsulé dans la fonction `tokenize_flow()` :
+
+```python
+def tokenize_flow(pd_dataset_path: Path) -> Dataset:
+    pd_dataset = load_dataset(pd_dataset_path)          # Parquet → pandas
+    hf_dataset = transform_ds_from_pandas_to_hf(pd_dataset)  # pandas → HF Dataset
+    tokenized_dataset = apply_tokenisation(hf_dataset)   # HF Dataset → tokenisé
+    return tokenized_dataset
+```
+
+**Étape 1 — Chargement Parquet.** Le fichier Parquet produit en section 2.6 est lu via `pd.read_parquet()`. Cette lecture charge l'intégralité du DataFrame en mémoire, ce qui est acceptable pour un dataset de 3 500 lignes.
+
+**Étape 2 — Conversion pandas → HuggingFace Dataset.** Le DataFrame pandas est converti en objet `datasets.Dataset` via `Dataset.from_pandas()`. Cette conversion est nécessaire pour bénéficier de la méthode `.map()` de HuggingFace, qui applique la tokenisation de manière efficace et expose les métadonnées de colonnes utilisées par le Trainer.
+
+**Étape 3 — Tokenisation par `.map()`.** La fonction `tokenize_chat()` est appliquée à chaque exemple via `.map()`, avec le paramètre `remove_columns=dataset_hf.column_names` qui supprime les colonnes textuelles d'origine (question, answer, metadata) pour ne conserver que les trois tenseurs numériques (`input_ids`, `attention_mask`, `labels`). Ce nettoyage est important : le Trainer HuggingFace tenterait sinon de passer les colonnes textuelles au modèle, ce qui provoquerait une erreur.
+
+Cette fonction `tokenize_flow()` est réutilisable : elle est appelée une fois pour le dataset d'entraînement (`sft_train.parquet`) et une fois pour le dataset de validation (`sft_val.parquet`). La tokenisation est exécutée **avant** le chargement du modèle dans la fonction `main()`, par conception : si une erreur survient dans les données (fichier manquant, colonnes inattendues), elle est détectée avant d'avoir consommé la mémoire GPU nécessaire au chargement du modèle.
+
+**DataCollator.** Le padding dynamique par batch est assuré par un `DataCollatorForSeq2Seq` :
+
+```python
+data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+```
+
+Ce collator aligne les séquences d'un même batch à la longueur de la séquence la plus longue du batch, en appliquant les valeurs de remplissage appropriées : `pad_token_id` sur les `input_ids`, `0` sur l'`attention_mask` (indiquant que les positions de padding ne doivent pas être prises en compte par l'attention), et `-100` sur les `labels` (indiquant que les positions de padding ne doivent pas contribuer à la loss). Le choix du padding dynamique (par batch) plutôt que du padding global (à la longueur maximale pour tout le dataset) réduit significativement le nombre de calculs inutiles sur les tokens de padding.
+
+### 3.6 Configuration de l'entraînement
+
+Les hyperparamètres d'entraînement sont externalisés dans `params.yaml` (section `training_arguments`) et interprétés par la fonction `define_training_arguments()` qui instancie un objet `TrainingArguments` de HuggingFace.
+
+#### 3.6.1 Taille de batch et accumulation de gradients
+
+```yaml
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 32
+```
+
+La taille de batch effective est le produit de ces deux paramètres : `1 × 32 = 32` exemples par step d'optimisation. Ce découpage est une adaptation aux contraintes mémoire du GPU T4 : un seul exemple est traité à la fois (batch size physique de 1), mais les gradients sont accumulés sur 32 forward passes consécutifs avant d'effectuer un step d'optimisation. Le résultat mathématique est équivalent à un batch de 32 exemples traités simultanément — la différence réside uniquement dans la consommation mémoire, qui est divisée par 32.
+
+Avec 3 500 exemples d'entraînement et un batch effectif de 32, chaque epoch comprend `3 500 / 32 ≈ 110 steps`, soit **330 steps pour 3 epochs**.
+
+#### 3.6.2 Taux d'apprentissage et planification
+
+```yaml
+learning_rate: 2e-4
+warmup_steps: 30
+lr_scheduler_type: "cosine"
+```
+
+Le taux d'apprentissage de `2e-4` est nettement plus élevé que celui typiquement utilisé en fine-tuning complet (de l'ordre de `1e-5` à `5e-5`). Cette valeur plus agressive est justifiée par la nature de l'entraînement LoRA : les poids originaux du modèle étant gelés, il n'y a pas de risque de **catastrophic forgetting** (perte des connaissances acquises lors du pré-entraînement). Seuls les adaptateurs LoRA sont mis à jour, et ils partent d'une initialisation proche de zéro — un learning rate plus élevé est donc nécessaire pour leur permettre de s'écarter suffisamment de cette initialisation et de capturer les adaptations nécessaires au domaine médical.
+
+La planification du learning rate suit un schéma en trois phases :
+1. **Warmup** (steps 0 à 30) : le learning rate monte progressivement de 0 à `2e-4`. Cette montée graduelle stabilise l'entraînement dans les premiers steps, où les gradients peuvent être bruités.
+2. **Décroissance cosinus** (steps 30 à 330) : le learning rate décroît selon une courbe cosinusoïdale de `2e-4` vers 0. Ce profil de décroissance, plus doux qu'une décroissance linéaire, permet au modèle d'effectuer des mises à jour fines dans les derniers steps.
+
+Les 30 warmup steps représentent environ 10% des 330 steps totaux, une proportion standard dans la littérature.
+
+#### 3.6.3 Nombre d'epochs et régularisation
+
+```yaml
+num_train_epochs: 3
+```
+
+Le choix de 3 epochs est motivé par la taille modeste du dataset (3 500 exemples). Au-delà de 3 passages complets sur les données, le risque de surapprentissage augmente significativement : le modèle commence à mémoriser les exemples individuels plutôt qu'à en extraire des patterns généralisables. Ce phénomène est particulièrement prononcé dans le contexte médical où les formulations peuvent être stéréotypées (questions d'examen suivant des patterns récurrents).
+
+La régularisation repose sur deux mécanismes complémentaires : le dropout LoRA à 5% (section 3.3) et le suivi de la loss de validation pour détecter le point de divergence entre train et eval loss.
+
+#### 3.6.4 Stratégie d'évaluation et de sauvegarde
+
+```yaml
+eval_strategy: "steps"
+eval_steps: 50
+save_strategy: "steps"
+save_steps: 50
+save_total_limit: 3
+load_best_model_at_end: True
+metric_for_best_model: "eval_loss"
+greater_is_better: False
+logging_steps: 10
+```
+
+L'évaluation sur le jeu de validation (1 000 exemples) est réalisée tous les 50 steps, soit environ **6 à 7 évaluations** sur l'ensemble de l'entraînement. Cette fréquence permet de suivre l'évolution de la eval loss avec une granularité suffisante pour détecter un début de surapprentissage, sans ralentir excessivement l'entraînement (chaque évaluation mobilise le GPU pendant quelques minutes).
+
+Les checkpoints sont sauvegardés avec la même fréquence (tous les 50 steps), avec un maximum de 3 checkpoints conservés simultanément (`save_total_limit: 3`) pour limiter l'espace disque. Le paramètre `load_best_model_at_end: True` assure qu'à la fin de l'entraînement, le modèle restauré est celui du checkpoint ayant obtenu la meilleure `eval_loss` — et non le modèle du dernier step, qui pourrait être surappris.
+
+Le logging des métriques d'entraînement (loss, grad_norm, learning rate) est effectué tous les 10 steps, offrant une vue fine de la dynamique d'entraînement. Ces métriques sont envoyées à MLflow via le paramètre `report_to: "mlflow"`.
+
+#### 3.6.5 Optimisations mémoire pour GPU T4
+
+Plusieurs paramètres ont été spécifiquement ajustés pour l'entraînement sur le GPU NVIDIA T4 de Google Colab :
+
+```yaml
+bf16: False
+fp16: True
+gradient_checkpointing: True
+gradient_checkpointing_kwargs:
+  use_reentrant: False
+optim: "paged_adamw_8bit"
+```
+
+**`fp16: True` / `bf16: False`** — L'entraînement utilise la précision mixte FP16 (16-bit floating point). Le GPU T4 ne supporte pas nativement le format BFloat16, qui aurait été préférable pour sa meilleure gestion des grandes valeurs (exposant sur 8 bits au lieu de 5). FP16 reste cependant largement suffisant pour le fine-tuning LoRA, où les mises à jour des poids sont relativement petites en magnitude.
+
+**`gradient_checkpointing: True`** — Le gradient checkpointing (ou activation recomputation) est une technique d'échange temps-mémoire. Au lieu de stocker toutes les activations intermédiaires du forward pass pour les réutiliser lors du backward pass, le modèle ne conserve que certains points de contrôle et recalcule les activations manquantes à la volée pendant la rétropropagation. Cela réduit la consommation mémoire d'un facteur proportionnel à la racine carrée du nombre de couches, au prix d'environ 30% de temps de calcul supplémentaire. Pour un modèle de 24 couches comme Qwen3-1.7B sur un GPU à 16 Go de VRAM, cette optimisation est indispensable.
+
+Le paramètre `use_reentrant: False` sélectionne l'implémentation non-réentrante du gradient checkpointing de PyTorch, qui est plus stable numériquement et gère correctement les graphes de calcul complexes (notamment ceux introduits par LoRA).
+
+**`optim: "paged_adamw_8bit"`** — L'optimiseur Paged AdamW 8-bit, fourni par BitsAndBytes, combine deux optimisations. Premièrement, les états de l'optimiseur (moyennes mobiles des gradients et de leurs carrés) sont stockés en 8 bits au lieu de 32 bits, divisant par 4 leur empreinte mémoire. Deuxièmement, le mécanisme de "paging" gère automatiquement le transfert des états entre la mémoire GPU et la mémoire CPU lorsque la VRAM est insuffisante, évitant les erreurs d'allocation mémoire (OOM). Cette combinaison est particulièrement efficace pour l'entraînement QLoRA sur des GPU à mémoire limitée.
+
+#### 3.6.6 Reprise après interruption
+
+L'entraînement sur Google Colab est soumis à des interruptions potentielles (timeout de session, déconnexion réseau). La fonction `train_model()` intègre un mécanisme de reprise automatique :
+
+```python
+last_checkpoint = None
+if os.path.isdir(training_args.output_dir):
+    last_checkpoint = get_last_checkpoint(training_args.output_dir)
+
+if last_checkpoint is not None:
+    trainer.train(resume_from_checkpoint=last_checkpoint)
+else:
+    trainer.train()
+```
+
+La fonction `get_last_checkpoint()` de HuggingFace inspecte le répertoire de sortie pour trouver le dernier checkpoint valide. Si un checkpoint est trouvé, l'entraînement reprend à partir de celui-ci — restaurant l'état du modèle, de l'optimiseur, du scheduler, et du compteur de steps. Ce mécanisme a été essentiel pour garantir la robustesse de l'entraînement dans un environnement d'exécution non garanti.
+
+### 3.7 Architecture du code d'entraînement
+
+Le code d'entraînement SFT est organisé en deux modules dans `src/training/` :
+
+**`utils_training.py`** — Module utilitaire regroupant les fonctions de chargement, de formatage et de tokenisation. L'architecture repose sur un système de caches pour éviter les rechargements coûteux :
+- `_load_params()` : charge le fichier `params.yaml` une seule fois via `@lru_cache(maxsize=1)`.
+- `_get_qwen_tokenizer()` : instancie le tokenizer une seule fois.
+- `_get_system_prompt()`, `_get_max_length()` : extraient les paramètres du modèle depuis le dictionnaire YAML mis en cache.
+
+Les fonctions d'accès aux configurations (`_get_lora_config()`, `_get_model_name()`, `_get_quantization_config()`, `_get_config_training_arguments()`) interrogent toutes le même dictionnaire mis en cache par `_load_params()`, garantissant la cohérence des paramètres à travers le code.
+
+**`train_sft.py`** — Script principal d'entraînement. La fonction `main()` orchestre les cinq étapes dans un ordre précis :
+
+1. **Tokenisation** (`tokenize_flow`) — Les datasets train et validation sont tokenisés en premier, avant tout chargement de modèle. Si une erreur survient dans les données (fichier manquant, format incorrect), elle est détectée sans avoir consommé la mémoire GPU.
+2. **DataCollator** (`get_data_collator`) — Instanciation du collator pour le padding dynamique.
+3. **TrainingArguments** (`define_training_arguments`) — Construction de l'objet de configuration à partir de `params.yaml`.
+4. **Modèle** (`define_model`) — Chargement quantifié + application LoRA. C'est l'étape la plus coûteuse en mémoire.
+5. **Entraînement** (`train_model`) — Instanciation du Trainer et lancement de la boucle d'entraînement, avec sauvegarde du modèle LoRA final dans `models/lora_trained_model/`.
+
+Le modèle sauvegardé ne contient que les poids des adaptateurs LoRA (quelques dizaines de Mo), pas l'intégralité du modèle de base. Pour l'inférence, les adaptateurs sont fusionnés avec le modèle de base à la volée.
+
+### 3.8 Résultats de l'entraînement SFT
+
+L'entraînement a été exécuté sur Google Colab avec un GPU NVIDIA T4 (16 Go VRAM). Le run complet a duré **2 heures et 41 minutes** pour 330 steps (3 epochs).
+
+#### 3.8.1 Métriques d'entraînement
+
+| Métrique | Valeur |
+|---|---|
+| Durée totale | 9 692 secondes (~2h41) |
+| Steps totaux | 330 (3 epochs × ~110 steps/epoch) |
+| Train loss moyenne | 1,112 |
+| Dernière eval loss (step 300) | 1,189 |
+| Débit d'entraînement | 1,083 samples/seconde |
+| Débit en steps | 0,034 steps/seconde |
+
+#### 3.8.2 Évolution de la loss
+
+Les derniers points de logging montrent une convergence stable :
+
+| Epoch | Train loss | Grad norm | Learning rate |
+|---|---|---|---|
+| ~2,82 | 0,9184 | 0,4787 | 2,408e-6 |
+| ~2,92 | 0,9512 | 0,5688 | 6,627e-7 |
+| 3,00 | 0,9994 | 0,8805 | 5,483e-9 |
+
+La train loss a convergé autour de 0,92–1,00 en fin d'entraînement, ce qui indique que le modèle a correctement assimilé les patterns du dataset. La dernière eval loss de 1,189 (au step 300, epoch 2,73) montre un écart modéré avec la train loss, suggérant une légère tendance au surapprentissage dans le dernier quart de l'entraînement — un comportement attendu sur un dataset de cette taille. Le mécanisme `load_best_model_at_end` assure que le modèle final correspond au checkpoint avec la meilleure eval loss, atténuant ainsi l'impact de cette légère dégradation.
+
+Les grad_norm restent dans une plage raisonnable (< 1,0), confirmant la stabilité numérique de l'entraînement en QLoRA/FP16.
+
+#### 3.8.3 Infrastructure et coût
+
+L'entraînement a été réalisé sur le tier gratuit de Google Colab avec un GPU T4. Le choix de Colab a été dicté par les contraintes d'infrastructure : le GPU local (Quadro T1000 avec 4 Go de VRAM) est insuffisant pour l'entraînement, et les quotas GPU de GCP n'ont pas pu être débloqués sur le compte gratuit (300$ de crédits disponibles mais non utilisables pour des GPU). Colab offre un accès gratuit au T4, moyennant des sessions limitées en durée, ce qui a justifié l'implémentation du mécanisme de reprise par checkpoint (section 3.6.6).
+
+Le modèle LoRA entraîné a été sauvegardé dans `models/lora_trained_model/`. Ce répertoire ne contient que les poids des adaptateurs LoRA, soit quelques dizaines de mégaoctets — à comparer aux 3,4 Go du modèle de base complet.
 
 ---
 
