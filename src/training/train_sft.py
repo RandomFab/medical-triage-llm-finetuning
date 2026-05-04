@@ -2,6 +2,7 @@ from functools import lru_cache
 from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model,prepare_model_for_kbit_training
 import torch
 import os
+import mlflow
 
 from datasets import Dataset
 import pandas as pd
@@ -196,6 +197,7 @@ def train_model(
         trainer.train()
 
     trainer.save_model(ROOT_MODEL_DIR / "lora_trained_model")
+    mlflow.log_artifacts(str(ROOT_MODEL_DIR / "lora_trained_model"), artifact_path="lora_trained_model")
     logger.info("Model trained successfully")
     return trainer
 
