@@ -109,7 +109,7 @@ def format_qwen_prompt(question: str) -> str: # → fonction de debuggage : perm
         _apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
     )
 
-def format_dpo_chat(question: str, chosen_answer: str, rejected_answer: str) -> str:
+def format_dpo_chat(question: str, chosen_answer: str, rejected_answer: str) -> dict:
     system_prompt = _get_system_prompt()
     chat = {
         "prompt": [
