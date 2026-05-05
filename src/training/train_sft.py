@@ -1,5 +1,11 @@
 from functools import lru_cache
-from peft import LoraConfig, PeftMixedModel, PeftModel, get_peft_model,prepare_model_for_kbit_training
+from peft import (
+    LoraConfig,
+    PeftMixedModel,
+    PeftModel,
+    get_peft_model,
+    prepare_model_for_kbit_training,
+)
 import torch
 import os
 import mlflow
@@ -25,11 +31,36 @@ from config.paths import (
 )
 from src.training.utils_training import (
     _get_qwen_tokenizer,
+    _get_max_length,
     load_dataset,
-    tokenize_chat,
     _load_params,
     setup_mlflow_run,
+    format_qwen_chat,
+    format_qwen_prompt,
+    define_training_arguments,
 )
+
+
+def tokenize_chat(question: str, answer: str) -> dict:
+    tokenizer = _get_qwen_tokenizer()
+    max_length = _get_max_length()
+
+    chat_text = format_qwen_chat(question, answer)
+    prompt_text = format_qwen_prompt(question)
+
+    input_ids = tokenizer.encode(chat_text, truncation=True, max_length=max_length)
+    prompt_ids = tokenizer.encode(prompt_text)
+
+    idx = min(len(prompt_ids), len(input_ids))
+
+    labels = input_ids.copy()
+    labels[:idx] = [-100] * idx
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": [1] * len(input_ids),
+        "labels": labels,
+    }
 
 
 def transform_ds_from_pandas_to_hf(dataset: pd.DataFrame) -> Dataset:
@@ -69,47 +100,6 @@ def get_data_collator(tokenizer):
 
     logger.info("Data collator generated successfully")
     return data_collator
-
-
-@lru_cache(maxsize=1)
-def _get_config_training_arguments():
-    params = _load_params()
-    return params["training_arguments"]
-
-
-def define_training_arguments(checkpoint_output_dir: Path) -> TrainingArguments:
-
-    logger.info("loading training arguments from params.yaml")
-    params_training_args = _get_config_training_arguments()
-
-    training_args = TrainingArguments(
-        output_dir=checkpoint_output_dir,
-        per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
-        gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
-        learning_rate=float(params_training_args["learning_rate"]),
-        num_train_epochs=params_training_args["num_train_epochs"],
-        warmup_steps=params_training_args["warmup_steps"],
-        lr_scheduler_type=params_training_args["lr_scheduler_type"],
-        eval_strategy=params_training_args["eval_strategy"],
-        eval_steps=params_training_args["eval_steps"],
-        save_strategy=params_training_args["save_strategy"],
-        save_steps=params_training_args["save_steps"],
-        save_total_limit=params_training_args["save_total_limit"],
-        logging_steps=params_training_args["logging_steps"],
-        load_best_model_at_end=params_training_args["load_best_model_at_end"],
-        bf16=params_training_args["bf16"],
-        fp16=params_training_args["fp16"],                                            # ← ajouté
-        gradient_checkpointing=params_training_args["gradient_checkpointing"],        # ← ajouté
-        gradient_checkpointing_kwargs=params_training_args["gradient_checkpointing_kwargs"],  # ← ajouté
-        optim=params_training_args["optim"],                                          # ← ajouté
-        metric_for_best_model=params_training_args["metric_for_best_model"],
-        greater_is_better=params_training_args["greater_is_better"],
-        report_to=params_training_args["report_to"],
-    )
-
-    logger.info("Training arguments defined successfully")
-
-    return training_args
 
 
 @lru_cache(maxsize=1)
@@ -169,6 +159,7 @@ def define_model():
     model = get_peft_model(model_4bit, lora_config)
     return model
 
+
 def train_model(
     training_args: TrainingArguments,
     model: PeftModel | PeftMixedModel,
@@ -197,7 +188,12 @@ def train_model(
         trainer.train()
 
     trainer.save_model(ROOT_MODEL_DIR / "lora_trained_model")
-    mlflow.log_artifacts(str(ROOT_MODEL_DIR / "lora_trained_model"), artifact_path="lora_trained_model")
+
+    mlflow.log_artifacts(
+        str(ROOT_MODEL_DIR / "lora_trained_model"),
+        artifact_path="lora_trained_model",
+    )
+    mlflow.set_tag("model_status", "champion")
     logger.info("Model trained successfully")
     return trainer
 
@@ -216,7 +212,10 @@ def main():
         data_collator = get_data_collator(tokenizer)
 
         # === training arguments ===
-        training_args = define_training_arguments(ROOT_MODEL_DIR / "sft_checkpoints")
+        training_args = define_training_arguments(
+            stage="sft",
+            checkpoint_output_dir=ROOT_MODEL_DIR / "sft_checkpoints",
+        )
 
         # === model definition ===
         model = define_model()
