@@ -20,3 +20,5 @@ SFT_TEST_DATASET_PATH = SFT_DATASET_DIR / "sft_test.parquet"
 
 
 RAW_DATA_GCS_URL = "gs://p14-medical-data/raw_data"
+
+GCS_MODEL_PATH = "gs://p14-medical-data/mlflow-artifacts"
