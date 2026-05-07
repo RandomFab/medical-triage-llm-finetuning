@@ -61,6 +61,7 @@ def _load_sft_lora_adapter():
         filter_string='tags.model_status = "champion" and tags.stage = "sft"',
         order_by=["start_time DESC"],
         max_results=1,
+        experiment_ids=["1"]
     )
 
     if runs.empty:
