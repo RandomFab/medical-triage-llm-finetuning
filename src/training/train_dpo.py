@@ -3,7 +3,7 @@ import os
 import mlflow.artifacts
 from peft import PeftModel
 import torch
-from transformers.modeling_utils import PreTrainedTokenizerBase
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer_utils import get_last_checkpoint
 from config.logger import logger
 from transformers import BitsAndBytesConfig, AutoModelForCausalLM, TrainingArguments
@@ -11,8 +11,6 @@ from trl import DPOTrainer
 from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
 from src.training.train_sft import _get_quantization_config, _get_model_name
 from src.training.utils_training import (
-    _get_quantization_config,
-    _get_model_name,
     define_training_arguments,
     setup_mlflow_run,
     transform_ds_from_pandas_to_hf,
