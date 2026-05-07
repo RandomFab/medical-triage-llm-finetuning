@@ -7,7 +7,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer_utils import get_last_checkpoint
 from config.logger import logger
 from transformers import BitsAndBytesConfig, AutoModelForCausalLM, TrainingArguments
-from trl import DPOTrainer
+from trl import DPOTrainer, DPOConfig
 from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
 from src.training.train_sft import _get_quantization_config, _get_model_name
 from src.training.utils_training import (
@@ -95,17 +95,16 @@ def train_dpo_model(
     model: PeftModel,
     train_dataset: Dataset,
     eval_dataset: Dataset,
-    training_args: TrainingArguments,
+    training_args: DPOConfig,
     tokenizer: PreTrainedTokenizerBase,
 ) -> DPOTrainer:
 
     trainer = DPOTrainer(
         model=model,
-        args=training_args,  # TrainingArguments comme en SFT
+        args=training_args,  # DPOConfig
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=tokenizer,  # le tokenizer Qwen3
-        beta=0.1,  # paramètre clé du DPO
     )
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir):

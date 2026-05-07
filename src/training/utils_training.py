@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 from datasets import Dataset
 from transformers import TrainingArguments
+from trl import DPOConfig
 
 from config.logger import logger
 from config.paths import PARAMS_PATH, PROJECT_ROOT
@@ -145,12 +146,12 @@ def _get_config_training_arguments(stage: Literal["sft", "dpo"]):
 def define_training_arguments(
     stage: Literal["sft", "dpo"],
     checkpoint_output_dir: Path,
-) -> TrainingArguments:
+) -> TrainingArguments | DPOConfig:
 
     logger.info(f"loading {stage} training arguments from params.yaml")
     params_training_args = _get_config_training_arguments(stage)
-
-    training_args = TrainingArguments(
+    
+    kwargs = dict(
         output_dir=checkpoint_output_dir,
         per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
         gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
@@ -174,6 +175,11 @@ def define_training_arguments(
         greater_is_better=params_training_args["greater_is_better"],
         report_to=params_training_args["report_to"],
     )
+
+    if stage == "dpo":
+        training_args = DPOConfig(beta=0.1, **kwargs)
+    else:
+        training_args = TrainingArguments(**kwargs)
 
     logger.info(f"{stage} training arguments defined successfully")
 
