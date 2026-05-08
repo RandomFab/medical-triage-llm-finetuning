@@ -243,5 +243,28 @@ def setup_mlflow_run(stage: str) -> mlflow.ActiveRun:
     logger.info(f"Starting MLflow run: {run_name}")
     return mlflow.start_run(run_name=run_name, tags=tags)
 
+def _load_sft_lora_adapter():
 
+    logger.info("Loading SFT LoRA adapter from the latest champion run...")
+    experiment = mlflow.get_experiment_by_name("sft-qwen3-medical")
+
+    runs = mlflow.search_runs(
+        filter_string='tags.model_status = "champion" and tags.stage = "sft"',
+        order_by=["start_time DESC"],
+        max_results=1,
+        experiment_ids=[experiment.experiment_id]
+    )
+
+    if runs.empty:
+        raise ValueError(
+            "No champion run found for SFT stage. Please train an SFT model first."
+        )
+
+    run_id = runs.iloc[0].run_id
+
+    logger.info(f"Found champion run with ID: {run_id}")
+
+    model = mlflow.artifacts.download_artifacts(f"runs:/{run_id}/lora_trained_model")
+
+    return model
 
