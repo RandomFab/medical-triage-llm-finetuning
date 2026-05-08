@@ -779,7 +779,191 @@ Le modèle LoRA entraîné a été sauvegardé dans `models/lora_trained_model/`
 
 ## 4. Alignement par préférences (DPO)
 
-*[À compléter — Semaine 3]*
+L'entraînement supervisé (section 3) a permis de spécialiser le modèle Qwen3-1.7B sur le domaine médical : il sait désormais produire des réponses structurées à des questions cliniques. Cependant, le SFT optimise uniquement la vraisemblance des réponses contenues dans le corpus d'entraînement — il ne distingue pas une réponse médicalement pertinente d'une réponse plausible mais trop vague ou cliniquement sous-optimale. C'est précisément l'objet de cette quatrième phase : aligner le comportement du modèle sur les préférences cliniques validées, en lui apprenant à discriminer les bonnes réponses des mauvaises à partir de paires comparatives.
+
+La technique retenue est **DPO** (Direct Preference Optimization, Rafailov et al., 2023). Contrairement à l'approche RLHF classique qui nécessite d'entraîner un modèle de récompense séparé avant de lancer une boucle de renforcement, le DPO reformule directement l'objectif d'alignement comme un problème de classification sur des paires (chosen, rejected). Cette simplification réduit considérablement la complexité d'implémentation et la charge en mémoire GPU, ce qui le rend particulièrement adapté aux contraintes d'infrastructure du POC.
+
+### 4.1 Fondements de DPO et lien avec le SFT
+
+Le DPO s'appuie sur une reformulation mathématique de l'objectif RLHF. L'idée centrale est que la politique optimale sous contrainte KL peut être exprimée directement en fonction du modèle de référence, sans passer par un modèle de récompense explicite. La fonction de perte DPO maximise le log-ratio entre la probabilité attribuée à la réponse choisie et celle attribuée à la réponse rejetée, relative au modèle de référence :
+
+```
+L_DPO = -E[log σ(β · (log π_θ(chosen)/π_ref(chosen) - log π_θ(rejected)/π_ref(rejected)))]
+```
+
+Le paramètre **beta** contrôle l'intensité du rappel vers le modèle de référence. Un beta élevé contraint le modèle à rester proche du modèle SFT de départ, au risque de ne pas suffisamment différencier chosen et rejected. Un beta trop faible l'en éloigne au point de risquer une dégradation des connaissances médicales acquises lors du SFT — phénomène analogue au *catastrophic forgetting*.
+
+Un prérequis fondamental de DPO est que **le modèle de départ soit le modèle SFT, et non le modèle de base**. En effet, DPO affine les préférences d'un modèle qui sait déjà répondre correctement dans le domaine cible : il corrige les nuances, les priorités cliniques, le registre. Appliquer DPO directement sur le modèle de base serait sans effet utile, car le modèle n'aurait pas encore la capacité de produire des réponses médicales structurées que l'alignement pourrait différencier.
+
+### 4.2 Chargement du modèle SFT champion depuis MLflow
+
+Le module `train_dpo.py` implémente une chaîne SFT → DPO traçable et reproductible, reposant sur le registre MLflow pour identifier et récupérer automatiquement le meilleur modèle SFT.
+
+La fonction `_load_sft_lora_adapter()` interroge le serveur MLflow pour trouver le run le plus récent taggé `model_status=champion` et `stage=sft` dans l'expérience `sft-qwen3-medical` :
+
+```python
+def _load_sft_lora_adapter():
+    experiment = mlflow.get_experiment_by_name("sft-qwen3-medical")
+    runs = mlflow.search_runs(
+        filter_string='tags.model_status = "champion" and tags.stage = "sft"',
+        order_by=["start_time DESC"],
+        max_results=1,
+        experiment_ids=[experiment.experiment_id]
+    )
+    if runs.empty:
+        raise ValueError("No champion run found for SFT stage.")
+    run_id = runs.iloc[0].run_id
+    return mlflow.artifacts.download_artifacts(f"runs:/{run_id}/lora_trained_model")
+```
+
+Cette approche présente deux avantages majeurs pour la traçabilité. D'une part, elle garantit que l'entraînement DPO repart toujours du meilleur modèle SFT validé, sans risque de confusion entre différentes versions des adaptateurs. D'autre part, elle découple les deux étapes d'entraînement : SFT et DPO peuvent être relancés indépendamment sans modifier le code, le tag `champion` servant de contrat entre les deux runs.
+
+Les adaptateurs LoRA téléchargés sont chargés par-dessus le modèle de base quantifié via `PeftModel.from_pretrained()`, avec le paramètre `is_trainable=True` qui permet de continuer l'entraînement plutôt que de simplement effectuer de l'inférence :
+
+```python
+def define_model() -> PeftModel:
+    # Chargement du modèle de base en 4-bit (même configuration que pour le SFT)
+    model_4bit = AutoModelForCausalLM.from_pretrained(
+        model_name, quantization_config=quantization, device_map="auto",
+    )
+    model_4bit = prepare_model_for_kbit_training(
+        model_4bit,
+        use_gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+    )
+    # Chargement des adaptateurs LoRA du champion SFT, en mode entraînable
+    sft_adapter_path = _load_sft_lora_adapter()
+    model = PeftModel.from_pretrained(model_4bit, sft_adapter_path, is_trainable=True)
+    return model
+```
+
+La quantification 4-bit NF4 et les optimisations mémoire (gradient checkpointing, paged AdamW 8-bit) sont identiques à celles du SFT (section 3.2 et 3.6.5), ce qui garantit la cohérence de l'environnement d'entraînement entre les deux phases.
+
+### 4.3 Source de données : UltraMedical-Preference
+
+Le dataset DPO repose sur le corpus **UltraMedical-Preference** (TsinghuaC3I), dont le traitement a été décrit en section 2. Pour rappel, les 5 000 paires de ce dataset ont le schéma suivant :
+
+| Colonne | Type | Description |
+|---|---|---|
+| `question` | `str` | Question médicale ou cas clinique |
+| `chosen` | `str` | Réponse préférentielle, médicalement plus pertinente |
+| `rejected` | `str` | Réponse sous-optimale ou moins précise |
+| `dataset_name` | `str` | `"ultramed"` |
+| `language` | `str` | `"en"` |
+| `question_type` | `str` | `"conversational"` |
+| `confidence_level` | `str` | `"low"` |
+| `token_count_question` | `int` | Longueur en tokens (tokenizer Qwen3) |
+| `token_count_chosen` | `int` | Longueur de la réponse chosen |
+| `token_count_rejected` | `int` | Longueur de la réponse rejected |
+
+La distinction entre dataset SFT et dataset DPO est fondamentale : le SFT utilise des paires `(question, answer)` sans dimension comparative, tandis que le DPO requiert des triplets `(question, chosen, rejected)` pour définir la direction d'alignement. L'UltraMedical-Preference est le seul corpus du projet qui expose cette structure préférentielle, ce qui en fait la seule source utilisable pour le DPO.
+
+Le `confidence_level: "low"` attribué à cette source lors du nettoyage (section 2.5) reflète une limite inhérente : les jugements de préférence sont issus de comparaisons automatisées entre réponses générées, non de validations cliniques humaines. Cette limite est acceptée dans le cadre du POC mais constitue un axe d'amélioration prioritaire pour la mise en production (section 7).
+
+### 4.4 Formatage des données DPO
+
+Contrairement au SFT où la tokenisation et le masquage des labels sont gérés manuellement (section 3.4.3), le `DPOTrainer` de la bibliothèque `trl` prend en charge ces opérations à condition que les données soient présentées au format **conversationnel structuré**. La fonction `format_dpo_chat()` dans `utils_training.py` produit ce format :
+
+```python
+def format_dpo_chat(question: str, chosen_answer: str, rejected_answer: str) -> dict:
+    system_prompt = _get_system_prompt()
+    return {
+        "prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question}
+        ],
+        "chosen": [
+            {"role": "assistant", "content": chosen_answer}
+        ],
+        "rejected": [
+            {"role": "assistant", "content": rejected_answer}
+        ]
+    }
+```
+
+Le `DPOTrainer` reçoit ainsi des listes de messages plutôt que des tenseurs pré-tokenisés, et applique lui-même le chat template de Qwen3 aux trois séquences (prompt, chosen, rejected) ainsi que le masquage des labels nécessaire au calcul de la loss DPO. Cette délégation au Trainer élimine la nécessité d'un `DataCollatorForSeq2Seq` explicite et d'une logique de masquage manuelle.
+
+La transformation du DataFrame pandas en dataset HuggingFace formaté est réalisée par `prepare_dpo_dataset()` :
+
+```python
+def prepare_dpo_dataset(dataset: pd.DataFrame) -> Dataset:
+    dataset_hf = transform_ds_from_pandas_to_hf(dataset)
+    return dataset_hf.map(
+        lambda x: format_dpo_chat(x["question"], x["chosen"], x["rejected"]),
+        batched=False,
+        remove_columns=dataset_hf.column_names,
+    )
+```
+
+Le paramètre `remove_columns=dataset_hf.column_names` supprime les colonnes Parquet d'origine (métadonnées, token counts) pour ne conserver que les trois clés attendues par le `DPOTrainer` : `prompt`, `chosen`, `rejected`.
+
+### 4.5 Configuration de l'entraînement DPO
+
+Les hyperparamètres DPO sont définis dans la section `training_arguments.dpo` de `params.yaml`. La fonction `define_training_arguments(stage="dpo")` instancie un objet `DPOConfig` — une sous-classe de `TrainingArguments` enrichie du paramètre `beta` propre à DPO :
+
+```python
+if stage == "dpo":
+    training_args = DPOConfig(beta=0.1, **kwargs)
+else:
+    training_args = TrainingArguments(**kwargs)
+```
+
+Le tableau ci-dessous présente une comparaison des hyperparamètres SFT et DPO, avec la justification des différences :
+
+| Paramètre | SFT | DPO | Justification |
+|---|---|---|---|
+| `learning_rate` | `2e-4` | `5e-6` | Le DPO affine des préférences sur un modèle déjà spécialisé — un LR trop élevé risque de déstabiliser les représentations médicales acquises lors du SFT |
+| `num_train_epochs` | `2` | `2` | Dataset de taille équivalente (3 500 paires) — le risque de surapprentissage apparaît au-delà de 2 epochs |
+| `beta` | — | `0.1` | Valeur conservatrice recommandée pour les domaines à fort enjeu (médical) — maintient le modèle proche du SFT de référence |
+| `per_device_train_batch_size` | `1` | `1` | Contrainte VRAM T4 identique |
+| `gradient_accumulation_steps` | `32` | `32` | Batch effectif de 32 dans les deux cas |
+| `fp16` | `True` | `True` | T4 ne supporte pas bf16 |
+| `optim` | `paged_adamw_8bit` | `paged_adamw_8bit` | Optimisation mémoire identique |
+
+Le choix de `beta=0.1` mérite une explication approfondie. Le paramètre beta contrôle la force de rappel vers le modèle de référence (ici, le modèle SFT). En pratique, il agit comme un régulateur : un beta élevé (ex. 0.5) contraint fortement le modèle à rester proche du SFT, ce qui préserve ses connaissances médicales mais limite sa capacité à discriminer chosen et rejected. Un beta faible (ex. 0.01) lui donne plus de liberté pour apprendre les préférences, au risque de "désapprendre" certains acquis du SFT. La valeur 0.1, standard dans la littérature et recommandée pour les domaines à fort enjeu, constitue un compromis conservateur adapté au contexte clinique.
+
+### 4.6 Architecture du module d'entraînement DPO
+
+Le module `train_dpo.py` s'organise autour de cinq fonctions appelées séquentiellement dans `main()` :
+
+**`_load_sft_lora_adapter()`** — Interroge le registre MLflow pour récupérer les adaptateurs LoRA du meilleur run SFT (tag `model_status=champion` + `stage=sft`). Lève une exception explicite si aucun run champion n'est trouvé, forçant l'exécution du SFT avant le DPO.
+
+**`define_model()`** — Charge le modèle de base en 4-bit, prépare pour l'entraînement en précision réduite, puis superpose les adaptateurs LoRA SFT en mode entraînable. Le résultat est un objet `PeftModel` dont les adaptateurs sont initialisés avec les poids SFT plutôt qu'avec des poids aléatoires.
+
+**`prepare_dpo_dataset()`** — Convertit les DataFrames Parquet (train et validation) en datasets HuggingFace au format conversationnel DPO. La suppression des colonnes Parquet d'origine garantit que le DPOTrainer ne reçoit que les trois clés attendues.
+
+**`train_dpo_model()`** — Instancie le `DPOTrainer` avec le modèle, les datasets et la configuration, puis lance l'entraînement avec reprise automatique sur checkpoint. En fin d'entraînement, le modèle est sauvegardé localement dans `models/dpo_model_trained/` et les artefacts sont envoyés vers GCS via `mlflow.log_artifacts()`. Le tag `model_status=champion` + `stage=dpo` est apposé pour permettre la récupération ultérieure.
+
+**`main()`** — Orchestre le pipeline complet sous un contexte MLflow (`with setup_mlflow_run(stage="dpo"):`), qui crée un run nommé et taggé de la forme `dpo_qwen3-1.7b-base_qlora_r16_fp16_T4`.
+
+### 4.7 Intégration MLflow et chaîne SFT → DPO
+
+La traçabilité de la chaîne d'entraînement repose sur une convention de tags MLflow définie dans `setup_mlflow_run()` :
+
+```
+Expérience SFT  → run taggé stage="sft",  model_status="champion"
+                        ↓  (récupération automatique par _load_sft_lora_adapter)
+Expérience DPO  → run taggé stage="dpo",  model_status="champion"
+```
+
+Cette architecture de tags permet de rejouer la chaîne complète à tout moment sans intervention manuelle : si le modèle SFT champion change (nouveau run avec de meilleures métriques), le prochain run DPO repartira automatiquement du nouveau modèle. Les artefacts de chaque étape sont persistés sur `gs://p14-medical-data/mlflow-artifacts/`, garantissant leur disponibilité même après expiration des sessions Colab.
+
+### 4.8 Résultats de l'entraînement DPO
+
+*[À compléter après exécution du run DPO]*
+
+L'analyse des résultats portera sur les axes suivants :
+
+**Métriques quantitatives :**
+- Évolution de la `rewards/chosen` et `rewards/rejected` au fil des steps (indicateurs directs de la qualité de l'alignement)
+- `rewards/margins` = différence entre les deux — à surveiller : une marge trop faible indique que le modèle ne discrimine pas suffisamment chosen et rejected
+- Train loss et eval loss DPO
+- Perplexité sur le jeu de test SFT avant et après DPO (pour s'assurer que le DPO n'a pas dégradé les capacités acquises)
+
+**Analyse qualitative :**
+- Comparaison de réponses du modèle SFT vs DPO sur une sélection de questions cliniques du jeu de test
+- Vérification que les niveaux d'urgence (maximale / modérée / différée) sont mieux calibrés après alignement
+- Détection d'éventuelles régressions (cas où le modèle SFT répondait correctement mais le modèle DPO produit une réponse dégradée)
 
 ---
 

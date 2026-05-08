@@ -3,6 +3,11 @@ import yaml
 import re
 import mlflow
 import torch
+from pathlib import Path
+from typing import Literal
+from datasets import Dataset
+from transformers import TrainingArguments
+from trl import DPOConfig
 
 from config.logger import logger
 from config.paths import PARAMS_PATH, PROJECT_ROOT
@@ -15,6 +20,12 @@ def load_dataset(dataset_path: str):
     logger.info(f"Dataset loaded successfully from {dataset_path}")
     return dataset
 
+
+def transform_ds_from_pandas_to_hf(dataset: pd.DataFrame) -> Dataset:
+    logger.info("Transforming dataset from pandas DataFrame to Hugging Face Dataset...")
+    hf_dataset = Dataset.from_pandas(dataset)
+    logger.info("Dataset transformed successfully to Hugging Face Dataset")
+    return hf_dataset
 
 # === formatting functions for Qwen ===
 from functools import lru_cache
@@ -65,6 +76,16 @@ def _get_max_length():
 
     return max_length
 
+@lru_cache(maxsize=1)
+def _get_model_name():
+    params = _load_params()
+    return params["sft_model"]["model_name"]
+
+
+@lru_cache(maxsize=1)
+def _get_quantization_config():
+    params = _load_params()
+    return params["quantization_config"]
 
 def _clean_thinking_markers(text: str) -> str:
     return re.sub(r"<think>.*?</think>\n?", "", text, flags=re.DOTALL).strip()
@@ -99,28 +120,21 @@ def format_qwen_prompt(question: str) -> str: # → fonction de debuggage : perm
         _apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
     )
 
-
-# === tokenization functions for Qwen ===
-def tokenize_chat(question: str, answer: str) -> dict:
-    tokenizer = _get_qwen_tokenizer()
-    max_length = _get_max_length()
-
-    chat_text = format_qwen_chat(question, answer)
-    prompt_text = format_qwen_prompt(question)
-
-    input_ids = tokenizer.encode(chat_text, truncation=True, max_length=max_length)
-    prompt_ids = tokenizer.encode(prompt_text)
-
-    idx = min(len(prompt_ids), len(input_ids))
-
-    labels = input_ids.copy()
-    labels[:idx] = [-100] * idx
-
-    return {
-        "input_ids": input_ids,
-        "attention_mask": [1] * len(input_ids),
-        "labels": labels,
+def format_dpo_chat(question: str, chosen_answer: str, rejected_answer: str) -> dict:
+    system_prompt = _get_system_prompt()
+    chat = {
+        "prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question}
+        ],
+        "chosen": [
+            {"role": "assistant", "content": chosen_answer}
+        ],
+        "rejected": [
+            {"role": "assistant", "content": rejected_answer}
+        ]
     }
+    return chat
 
 
 def decode_token(token_id: int) -> str: # → fonction de debuggage : permet de décoder un token pour l'utilisateur
@@ -129,6 +143,57 @@ def decode_token(token_id: int) -> str: # → fonction de debuggage : permet de 
     decoded_text = tokenizer.decode([token_id])
 
     return decoded_text
+
+
+# === training arguments ===
+
+@lru_cache(maxsize=2)
+def _get_config_training_arguments(stage: Literal["sft", "dpo"]):
+    params = _load_params()
+    return params["training_arguments"][stage]
+
+
+def define_training_arguments(
+    stage: Literal["sft", "dpo"],
+    checkpoint_output_dir: Path,
+) -> TrainingArguments | DPOConfig:
+
+    logger.info(f"loading {stage} training arguments from params.yaml")
+    params_training_args = _get_config_training_arguments(stage)
+    
+    kwargs = dict(
+        output_dir=checkpoint_output_dir,
+        per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
+        gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
+        learning_rate=float(params_training_args["learning_rate"]),
+        num_train_epochs=params_training_args["num_train_epochs"],
+        warmup_steps=params_training_args["warmup_steps"],
+        lr_scheduler_type=params_training_args["lr_scheduler_type"],
+        eval_strategy=params_training_args["eval_strategy"],
+        eval_steps=params_training_args["eval_steps"],
+        save_strategy=params_training_args["save_strategy"],
+        save_steps=params_training_args["save_steps"],
+        save_total_limit=params_training_args["save_total_limit"],
+        logging_steps=params_training_args["logging_steps"],
+        load_best_model_at_end=params_training_args["load_best_model_at_end"],
+        bf16=params_training_args["bf16"],
+        fp16=params_training_args["fp16"],
+        gradient_checkpointing=params_training_args["gradient_checkpointing"],
+        gradient_checkpointing_kwargs=params_training_args["gradient_checkpointing_kwargs"],
+        optim=params_training_args["optim"],
+        metric_for_best_model=params_training_args["metric_for_best_model"],
+        greater_is_better=params_training_args["greater_is_better"],
+        report_to=params_training_args["report_to"],
+    )
+
+    if stage == "dpo":
+        training_args = DPOConfig(beta=0.1, **kwargs)
+    else:
+        training_args = TrainingArguments(**kwargs)
+
+    logger.info(f"{stage} training arguments defined successfully")
+
+    return training_args
 
 
 # === MLflow helpers ===
@@ -153,7 +218,7 @@ def setup_mlflow_run(stage: str) -> mlflow.ActiveRun:
     params = _load_params()
     lora = params["lora_config"]
     quant = params["quantization_config"]
-    train_args = params["training_arguments"]
+    train_args = params["training_arguments"][stage]
     model_name: str = params["sft_model"]["model_name"]   # "Qwen/Qwen3-1.7B-Base"
 
     short_model = model_name.split("/")[-1].lower()       # "qwen3-1.7b-base"
@@ -179,14 +244,4 @@ def setup_mlflow_run(stage: str) -> mlflow.ActiveRun:
     return mlflow.start_run(run_name=run_name, tags=tags)
 
 
-if __name__ == "__main__":
-    dataset = load_dataset(
-        PROJECT_ROOT / "data/processed/sft_dataset/sft_train.parquet"
-    )
-    print(dataset.iloc[0]["question"])
-    print(dataset.iloc[0]["answer"])
-    token = tokenize_chat(dataset.iloc[0]["question"], dataset.iloc[0]["answer"])
 
-    tokenizer = _get_qwen_tokenizer()
-    real_labels = [t for t in token["labels"] if t != -100]
-    print(tokenizer.decode(real_labels))
