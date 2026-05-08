@@ -9,9 +9,10 @@ from config.logger import logger
 from transformers import BitsAndBytesConfig, AutoModelForCausalLM, TrainingArguments
 from trl import DPOTrainer, DPOConfig
 from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
-from src.training.train_sft import _get_quantization_config, _get_model_name
 from src.training.utils_training import (
     define_training_arguments,
+    _get_quantization_config,
+    _get_model_name,
     setup_mlflow_run,
     transform_ds_from_pandas_to_hf,
     _get_qwen_tokenizer,
@@ -56,12 +57,13 @@ def define_model() -> PeftModel:
 def _load_sft_lora_adapter():
 
     logger.info("Loading SFT LoRA adapter from the latest champion run...")
+    experiment = mlflow.get_experiment_by_name("sft-qwen3-medical")
 
     runs = mlflow.search_runs(
         filter_string='tags.model_status = "champion" and tags.stage = "sft"',
         order_by=["start_time DESC"],
         max_results=1,
-        experiment_ids=["1"]
+        experiment_ids=[experiment.experiment_id]
     )
 
     if runs.empty:

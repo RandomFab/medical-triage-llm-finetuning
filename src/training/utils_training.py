@@ -76,6 +76,16 @@ def _get_max_length():
 
     return max_length
 
+@lru_cache(maxsize=1)
+def _get_model_name():
+    params = _load_params()
+    return params["sft_model"]["model_name"]
+
+
+@lru_cache(maxsize=1)
+def _get_quantization_config():
+    params = _load_params()
+    return params["quantization_config"]
 
 def _clean_thinking_markers(text: str) -> str:
     return re.sub(r"<think>.*?</think>\n?", "", text, flags=re.DOTALL).strip()

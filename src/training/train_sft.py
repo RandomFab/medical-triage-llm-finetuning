@@ -31,6 +31,8 @@ from config.paths import (
 )
 from src.training.utils_training import (
     _get_qwen_tokenizer,
+    _get_quantization_config,
+    _get_model_name,
     _get_max_length,
     load_dataset,
     _load_params,
@@ -106,18 +108,6 @@ def get_data_collator(tokenizer):
 def _get_lora_config():
     params = _load_params()
     return params["lora_config"]
-
-
-@lru_cache(maxsize=1)
-def _get_model_name():
-    params = _load_params()
-    return params["sft_model"]["model_name"]
-
-
-@lru_cache(maxsize=1)
-def _get_quantization_config():
-    params = _load_params()
-    return params["quantization_config"]
 
 
 def define_model():
