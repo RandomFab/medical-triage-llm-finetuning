@@ -39,6 +39,7 @@ def define_model() -> PeftModel:
         model_name,
         quantization_config=quantization,
         device_map="auto",
+        torch_dtype=torch.float16,
     )
 
     # ← ajouté : cast des layer norms en fp32, désactivation du KV cache,
@@ -151,9 +152,7 @@ def main():
 
         # === model definition ===
         model = define_model()
-        for name, param in model.named_parameters():
-            if param.requires_grad and param.dtype == torch.bfloat16:
-                print(f"⚠️ BF16 trouvé : {name} → {param.dtype}")
+        
         # === training ===
 
         train_dpo_model(
