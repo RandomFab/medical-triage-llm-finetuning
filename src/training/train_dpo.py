@@ -52,6 +52,9 @@ def define_model() -> PeftModel:
 
     sft_model = _load_sft_lora_adapter()
     model = PeftModel.from_pretrained(model_4bit, sft_model, device_map="auto", is_trainable=True,autocast_adapter_dtype=False)
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            param.data = param.data.to(torch.float32)
     return model
 
 
