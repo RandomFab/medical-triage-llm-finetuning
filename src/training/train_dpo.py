@@ -100,7 +100,12 @@ def train_dpo_model(
     training_args: DPOConfig,
     tokenizer: PreTrainedTokenizerBase,
 ) -> DPOTrainer:
-
+    # Cast les tenseurs trainables (adaptateurs LoRA) en fp16
+# Les couches 4-bit sont immunisées contre ce cast
+    for name, param in model.named_parameters():
+        if param.dtype == torch.bfloat16:
+            param.data = param.data.to(torch.float16)
+            
     trainer = DPOTrainer(
         model=model,
         args=training_args,  # DPOConfig
