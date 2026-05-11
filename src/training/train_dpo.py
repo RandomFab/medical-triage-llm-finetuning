@@ -136,6 +136,8 @@ def train_dpo_model(
 
 
 def main():
+
+    print("LANCEMENT DPO VERSION 2 AVEC FLOAT32")
     logger.info("Starting DPO training...")
 
     with setup_mlflow_run(stage="dpo"):
