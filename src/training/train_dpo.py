@@ -105,6 +105,17 @@ def train_dpo_model(
     tokenizer: PreTrainedTokenizerBase,
 ) -> DPOTrainer:
     
+    # --- HOOK POUR CASTER LES GRADIENTS BF16 EN FP16 POUR LE SCALER ---
+    def _cast_grad_to_fp16(grad):
+        if grad is not None and grad.dtype == torch.bfloat16:
+            return grad.to(torch.float16)
+        return grad
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            param.register_hook(_cast_grad_to_fp16)
+    # ------------------------------------------------------------------
+
     trainer = DPOTrainer(
         model=model,
         args=training_args,  # DPOConfig
