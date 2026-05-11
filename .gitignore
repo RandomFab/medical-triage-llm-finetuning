@@ -12,5 +12,11 @@ wheels/
 # Data (tracked by DVC)
 /data
 
+# models
+/models
+
 # documentation
 /docs
+
+# secrets
+.env

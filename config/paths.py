@@ -1,6 +1,10 @@
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
+
 DATA_DIR = PROJECT_ROOT / "data"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 PARAMS_PATH = PROJECT_ROOT / "params.yaml"
@@ -19,7 +23,8 @@ SFT_VAL_DATASET_PATH = SFT_DATASET_DIR / "sft_val.parquet"
 SFT_TEST_DATASET_PATH = SFT_DATASET_DIR / "sft_test.parquet"
 
 
-RAW_DATA_GCS_URL = "gs://p14-medical-data/raw_data"
+RAW_DATA_GCS_URL = os.environ.get("RAW_DATA_GCS_URL", "gs://p14-medical-data/raw_data")
 
-GCS_MODEL_PATH = "gs://p14-medical-data/mlflow-artifacts"
-GCS_MERGED_MODEL_PATH = "gs://p14-medical-data/merged-model-for-deployment"
+GCS_MODEL_PATH = os.environ.get("GCS_MODEL_PATH", "gs://p14-medical-data/mlflow-artifacts")
+LOCAL_MERGED_MODEL_PATH = ROOT_MODEL_DIR / "merged_model_for_deployment"
+GCS_MERGED_MODEL_PATH = os.environ.get("GCS_MERGED_MODEL_PATH", "gs://p14-medical-data/merged-model-for-deployment")

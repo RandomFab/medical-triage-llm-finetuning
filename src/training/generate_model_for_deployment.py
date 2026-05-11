@@ -1,5 +1,7 @@
+import os
+
 from transformers import AutoModelForCausalLM
-from config.paths import GCS_MERGED_MODEL_PATH
+from config.paths import GCS_MERGED_MODEL_PATH, LOCAL_MERGED_MODEL_PATH
 from src.training.utils_training import (
     _get_model_name,
     _load_sft_lora_adapter,
@@ -7,6 +9,8 @@ from src.training.utils_training import (
 )
 from config.logger import logger
 
+import mlflow
+mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
 
 def load_base_model():
     """Load base model in full precision for merge and deployment."""
@@ -44,15 +48,21 @@ def main():
     lora_adapter_model = _load_sft_lora_adapter()
     merged_model = merge_base_model_with_lora_adapter(base_model, lora_adapter_model)
 
-    save_model_for_deployment(merged_model, GCS_MERGED_MODEL_PATH)
+    save_model_for_deployment(merged_model, LOCAL_MERGED_MODEL_PATH)
     logger.info("Génération du modèle terminée.")
 
     logger.info("Chargement du tokenizer...")
     tokenizer = _get_qwen_tokenizer()
     logger.info("Tokenizer chargé avec succès.")
-    logger.info(f"Sauvegarde du tokenizer vers {GCS_MERGED_MODEL_PATH}...")
-    tokenizer.save_pretrained(GCS_MERGED_MODEL_PATH)
+    logger.info(f"Sauvegarde du tokenizer vers {LOCAL_MERGED_MODEL_PATH}...")
+    tokenizer.save_pretrained(LOCAL_MERGED_MODEL_PATH)
     logger.info("Tokenizer sauvegardé avec succès.")
+    with mlflow.start_run(run_name="merge_model_for_deployment", tags={"stage": "deployment"}):
+        
+        mlflow.log_artifacts(
+            str(LOCAL_MERGED_MODEL_PATH),
+            artifact_path="merged_model_for_deployment",
+        )
 
 
 if __name__ == "__main__":
