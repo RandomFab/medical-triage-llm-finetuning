@@ -85,7 +85,7 @@ training_arguments:
     logging_steps: 10
     load_best_model_at_end: True
     bf16: False
-    fp16: True
+    fp16: False
     gradient_checkpointing: True
     gradient_checkpointing_kwargs:
       use_reentrant: False
