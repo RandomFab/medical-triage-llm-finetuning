@@ -51,7 +51,7 @@ def define_model() -> PeftModel:
     )
 
     sft_model = _load_sft_lora_adapter()
-    model = PeftModel.from_pretrained(model_4bit, sft_model, device_map="auto", is_trainable=True)
+    model = PeftModel.from_pretrained(model_4bit, sft_model, device_map="auto", is_trainable=True,autocast_adapter_dtype=False)
     return model
 
 
@@ -152,7 +152,7 @@ def main():
 
         # === model definition ===
         model = define_model()
-        
+
         # === training ===
 
         train_dpo_model(
