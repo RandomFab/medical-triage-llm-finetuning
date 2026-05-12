@@ -164,6 +164,7 @@ def define_training_arguments(
     kwargs = dict(
         output_dir=checkpoint_output_dir,
         per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
+        per_device_eval_batch_size=params_training_args["per_device_eval_batch_size"],
         gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
         learning_rate=float(params_training_args["learning_rate"]),
         num_train_epochs=params_training_args["num_train_epochs"],
@@ -187,7 +188,7 @@ def define_training_arguments(
     )
 
     if stage == "dpo":
-        training_args = DPOConfig(beta=0.1, **kwargs)
+        training_args = DPOConfig(beta=0.1,max_length=512,max_prompt_length=256,precompute_ref_log_probs=True,  **kwargs)
     else:
         training_args = TrainingArguments(**kwargs)
 
