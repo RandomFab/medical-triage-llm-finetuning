@@ -188,7 +188,7 @@ def define_training_arguments(
     )
 
     if stage == "dpo":
-        training_args = DPOConfig(beta=0.1,max_length=512,max_prompt_length=256,precompute_ref_log_probs=True,  **kwargs)
+        training_args = DPOConfig(beta=0.1,max_length=512,precompute_ref_log_probs=True,  **kwargs)
     else:
         training_args = TrainingArguments(**kwargs)
 
