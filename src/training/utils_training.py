@@ -11,6 +11,13 @@ from trl import DPOConfig
 
 from config.logger import logger
 from config.paths import PARAMS_PATH, PROJECT_ROOT
+import os
+
+# Configuration explicite de MLflow via les variables d'environnement
+if "MLFLOW_TRACKING_URI" in os.environ:
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+if "MLFLOW_EXPERIMENT_NAME" in os.environ:
+    mlflow.set_experiment(os.environ["MLFLOW_EXPERIMENT_NAME"])
 
 
 # === load dataset functions ===
