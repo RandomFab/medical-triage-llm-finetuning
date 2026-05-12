@@ -72,9 +72,9 @@ training_arguments:
     greater_is_better: False
     report_to: "mlflow"
   dpo:
-    per_device_train_batch_size: 1
+    per_device_train_batch_size: 2
     per_device_eval_batch_size: 1 
-    gradient_accumulation_steps: 32
+    gradient_accumulation_steps: 16
     learning_rate: 5e-6                        # ← LR plus conservateur pour DPO (préférence vs SFT)
     num_train_epochs: 2
     warmup_steps: 30
