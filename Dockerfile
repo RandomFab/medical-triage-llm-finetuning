@@ -1,5 +1,5 @@
-# Utilisation d'une image Python officielle (Python 3.10 est recommandé pour vLLM)
-FROM python:3.10-slim
+# Utilisation d'une image Python officielle (Python 3.11 pour compatibilité avec les dépendances ML)
+FROM python:3.11-slim
 
 # Définition du répertoire de travail dans le conteneur
 WORKDIR /app
