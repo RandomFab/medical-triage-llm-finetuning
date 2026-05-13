@@ -25,9 +25,13 @@ jobs:
 
       - name: Install dependencies for testing
         run: |
-          uv pip install --system fastapi uvicorn pytest httpx pydantic
+          uv pip install --system fastapi uvicorn pytest httpx pydantic ruff
           # Note: vLLM nécessite un GPU, on évite donc de l'installer entièrement 
           # sur le runner CPU standard de GitHub Actions pour de simples tests unitaires.
+
+      - name: Run code quality checks (Ruff)
+        run: |
+          ruff check .
 
       # - name: Run tests
       #   run: |
@@ -80,17 +84,20 @@ jobs:
         # Ceci est un exemple générique pour se connecter à un serveur (ex: VM AWS/GCP/Azure)
         # et lui dire de pull la nouvelle image et redémarrer le conteneur.
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: GITHUB_TOKEN
           script: |
-            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+            echo $GITHUB_TOKEN | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/${{ github.repository }}/medical-qwen-api:main
             docker stop medical-api || true
             docker rm medical-api || true
             # Note: Le montage du dossier models dépend du chemin sur votre serveur
             docker run -d --name medical-api --gpus all -p 8000:8000 \
-              -v /path/to/server/models:/app/models \
-              -e MODEL_PATH=/app/models/merged_model_for_deployment \
+              -v /home/ubuntu/models:/app/models \
+              -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_for_deployment \
               ghcr.io/${{ github.repository }}/medical-qwen-api:main

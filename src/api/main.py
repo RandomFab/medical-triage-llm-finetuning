@@ -52,22 +52,22 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     process_time = time.time() - start_time
     
-    # Ne pas logger les healthchecks pour Ã©viter le bruit
+    # Ne pas logger les healthchecks pour éviter le bruit
     if request.url.path != "/health":
         logger.info(
-            f"RequÃªte: {request.method} {request.url.path} "
+            f"Requête: {request.method} {request.url.path} "
             f"| Status: {response.status_code} "
             f"| Latence: {process_time:.4f}s"
         )
     return response
 
-# 1. Robustesse : Gestion globale des erreurs non prÃ©vues
+# 1. Robustesse : Gestion globale des erreurs non prédites
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Erreur critique inattendue : {str(exc)}")
     return JSONResponse(
         status_code=500,
-        content={"message": "Une erreur interne est survenue. Veuillez rÃ©essayer plus tard."},
+        content={"message": "Une erreur interne est survenue. Veuillez réessayer plus tard."},
     )
 
 
@@ -88,12 +88,12 @@ async def generate_text(request: GenerationRequest):
 
 @app.get("/health")
 async def health_check():
-    # VÃ©rification avancÃ©e : le moteur d'infÃ©rence est-il bien en ligne ?
+    # Vérification avancée : le moteur d'inférence est-il bien en ligne ?
     model_status = "loaded" if engine else "not_loaded"
     status_code = 200 if engine else 503
     
     if not engine:
-        raise HTTPException(status_code=503, detail="ModÃ¨le non initialisÃ©")
+        raise HTTPException(status_code=503, detail="Modèle non initialisé")
         
     return {
         "status": "ok", 

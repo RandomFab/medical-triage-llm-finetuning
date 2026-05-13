@@ -4,17 +4,21 @@ FROM python:3.10-slim
 # Définition du répertoire de travail dans le conteneur
 WORKDIR /app
 
+# Ajout explicite du chemin principal au PYTHONPATH pour rendre les imports robustes
+ENV PYTHONPATH=/app
+
 # Installation des paquets systèmes requis
 RUN apt-get update && apt-get install -y \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copier le fichier de configuration des dépendances
 COPY pyproject.toml ./
 
-# Installation des dépendances (on installe explicitement fastapi, uvicorn et vllm)
+# Installation des dépendances (on installe explicitement fastapi, uvicorn, vllm, etc.)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir fastapi uvicorn vllm pydantic
+    pip install --no-cache-dir fastapi uvicorn vllm pydantic python-dotenv
 
 # Copier les dossiers nécessaires pour faire tourner l'API
 COPY src/ ./src/
@@ -22,6 +26,10 @@ COPY config/ ./config/
 
 # EXPLICATION : On ne copie PAS le dossier 'models/' directement dans l'image car il est trop lourd.
 # Il est préférable de le monter en tant que volume lors du 'docker run'.
+
+# Informe Docker de l'état de santé du conteneur en appelant l'endpoint /health
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Exposer le port de l'API
 EXPOSE 8000
