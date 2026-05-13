@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
+import time
 from contextlib import asynccontextmanager
 from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH,GCS_MERGED_MODEL_PATH
 from config.logger import logger
 from .services.inference import VLLMEngine
+from .schemas import GenerationRequest, GenerationResponse
 
 # Initialisation du moteur
 engine = None
@@ -33,14 +36,40 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+# 1. Sécurité : Configuration CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # À restreindre en production ! (ex: ["https://mon-app.fr"])
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
-class GenerationRequest(BaseModel):
-    prompt: str
-    max_tokens: int = 512
-    temperature: float = 0.7
+# 2. Observabilité : Middleware pour mesurer les performances
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    # Ne pas logger les healthchecks pour Ã©viter le bruit
+    if request.url.path != "/health":
+        logger.info(
+            f"RequÃªte: {request.method} {request.url.path} "
+            f"| Status: {response.status_code} "
+            f"| Latence: {process_time:.4f}s"
+        )
+    return response
 
-class GenerationResponse(BaseModel):
-    response: str
+# 1. Robustesse : Gestion globale des erreurs non prÃ©vues
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Erreur critique inattendue : {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Une erreur interne est survenue. Veuillez rÃ©essayer plus tard."},
+    )
+
 
 @app.post("/generate", response_model=GenerationResponse)
 async def generate_text(request: GenerationRequest):
@@ -59,4 +88,15 @@ async def generate_text(request: GenerationRequest):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "API opérationnelle"}
+    # VÃ©rification avancÃ©e : le moteur d'infÃ©rence est-il bien en ligne ?
+    model_status = "loaded" if engine else "not_loaded"
+    status_code = 200 if engine else 503
+    
+    if not engine:
+        raise HTTPException(status_code=503, detail="ModÃ¨le non initialisÃ©")
+        
+    return {
+        "status": "ok", 
+        "message": "API opérationnelle",
+        "model_status": model_status
+    }
