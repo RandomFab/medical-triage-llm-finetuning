@@ -33,9 +33,9 @@ jobs:
         run: |
           ruff check .
 
-      # - name: Run tests
-      #   run: |
-      #     pytest tests/
+      - name: Run tests
+        run: |
+          pytest tests/
 
   build-and-push-docker:
     needs: code-quality-and-tests
