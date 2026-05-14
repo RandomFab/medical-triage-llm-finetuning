@@ -950,7 +950,75 @@ Cette architecture de tags permet de rejouer la chaîne complète à tout moment
 
 ### 4.8 Résultats de l'entraînement DPO
 
-*[À compléter après exécution du run DPO]*
+Le run DPO (`dpo_qwen3-1.7b-base_qlora_r16_bf16_T4`, run ID `7001354881a1`) a été exécuté
+sur GPU T4 (Google Colab) pendant **8h31** pour 220 steps (2 epochs sur 3 500 triplets,
+batch effectif de 32). Les métriques sont tracées toutes les 10 steps en train,
+toutes les 20 steps en évaluation.
+
+#### 4.8.1 Signal d'alignement : rewards/chosen, rejected et margins
+
+Les trois métriques de récompense constituent l'indicateur principal de la qualité
+de l'alignement DPO.
+
+| Métrique | Step 10 | Step 220 | Variation |
+|---|---|---|---|
+| `rewards/chosen` (train) | −0.0005 | −0.2742 | −0.274 |
+| `rewards/rejected` (train) | −0.0009 | −0.4909 | −0.490 |
+| `rewards/margins` (train) | +0.0004 | +0.217 | +0.216 |
+| `rewards/chosen` (eval) | −0.0051 | −0.246 | −0.241 |
+| `rewards/rejected` (eval) | −0.0143 | −0.439 | −0.425 |
+| `rewards/margins` (eval) | +0.009 | +0.194 | +0.185 |
+
+**Interprétation.** Les deux rewards sont négatifs et décroissants — c'est le comportement
+attendu sous DPO : le modèle s'éloigne du modèle de référence (SFT) pour les deux types
+de réponses, ce qui se traduit par une diminution du log-ratio relatif. Ce qui importe
+n'est pas le signe absolu mais l'écart entre les deux : **le rejected se dégrade 1,79× plus
+vite que le chosen** (−0.490 vs −0.274 sur le train). Le modèle apprend bien à pénaliser
+les réponses de moindre qualité plus fortement que les réponses préférentielles.
+
+La `rewards/margin` (= chosen − rejected) croît de +0.0004 à +0.217 en train et de
++0.009 à +0.194 en évaluation. Cette marge positive et croissante confirme que le modèle
+discrimine de mieux en mieux les réponses chosen des réponses rejected tout au long
+de l'entraînement. Sur le jeu d'évaluation, la marge se stabilise en plateau autour de
++0.193–0.194 entre les steps 180 et 220, ce qui indique que le modèle a convergé sans
+signe de surapprentissage : il continue de discriminer sur les données non vues avec
+la même efficacité que sur les données d'entraînement.
+
+#### 4.8.2 Loss DPO
+
+| Métrique | Step initial | Step final | Variation |
+|---|---|---|---|
+| Train loss | 0.693 | 0.601 | −0.092 (−13,3%) |
+| Eval loss | 0.689 | 0.621 | −0.068 (−9,9%) |
+
+La train loss DPO démarre à 0.693 — proche de log(2) ≈ 0.693, valeur théorique d'un
+modèle qui ne discrimine pas encore chosen et rejected (probabilité uniforme 50/50).
+Elle décroît progressivement jusqu'à 0.601 au step 160, puis oscille légèrement en
+fin de run (0.586–0.627), reflet de la variabilité naturelle des batches de taille 1.
+
+L'eval loss suit une trajectoire monotone décroissante de 0.689 à 0.621, avec un plateau
+très marqué entre les steps 160 et 220 (variation < 0.001). Ce comportement est cohérent
+avec ce qu'on observe sur les eval rewards/margins : le modèle a convergé vers une
+capacité de discrimination stable, sans dégradation ni surapprentissage détectables
+sur le jeu de validation.
+
+L'écart train/eval loss reste faible et stable (≈ 0.02 en fin de run), ce qui confirme
+la bonne généralisation du modèle aligné sur des triplets non vus.
+
+#### 4.8.3 Infrastructure et durée
+
+L'entraînement DPO a été réalisé dans les mêmes conditions que le SFT : GPU T4 (16 Go
+VRAM) sur Google Colab, quantification 4-bit NF4, gradient checkpointing activé.
+La durée de 8h31 (vs 2h41 pour le SFT) s'explique par le coût plus élevé du forward
+pass DPO : le `DPOTrainer` calcule les probabilités sur les deux séquences (chosen et
+rejected) à chaque step, en comparaison avec le modèle de référence gelé — soit
+approximativement 2× plus de calcul par batch que le SFT.
+
+Le modèle DPO final (`dpo_model_trained`) a été sauvegardé sous forme d'adaptateurs
+LoRA dans `models/dpo_model_trained/` et pushé vers GCS via MLflow (tag
+`model_status=champion`, `stage=dpo`). Il a ensuite été mergé avec le modèle de base
+Qwen3-1.7B-Base via `generate_model_for_deployment.py` pour produire le modèle
+monolithique chargé par vLLM en production.
 
 L'analyse des résultats portera sur les axes suivants :
 
@@ -969,7 +1037,185 @@ L'analyse des résultats portera sur les axes suivants :
 
 ## 5. Déploiement et infrastructure
 
-*[À compléter — Semaine 4]*
+L'objectif de cette phase est de rendre le modèle fine-tuné (SFT + DPO) accessible sous forme d'un service d'inférence en conditions quasi-réelles. Le déploiement s'articule autour de trois axes : une API REST exposant le modèle via un moteur d'inférence optimisé, une conteneurisation Docker garantissant la portabilité de l'application, et un pipeline CI/CD automatisant les tests, la construction de l'image et le déploiement sur une VM cloud.
+Cette section détaille l'architecture retenue, les choix techniques effectués à chaque couche, et la stratégie de tests mise en place pour sécuriser le pipeline.
+
+### 5.1 Architecture générale
+
+L'architecture de déploiement repose sur trois composants principaux organisés en couches :
+
+- **Couche d'inférence — vLLM** : Le moteur vLLM charge le modèle mergé (base + adaptateurs LoRA fusionnés) et expose une interface de génération asynchrone. Le choix de vLLM plutôt que la méthode `model.generate()` native de Hugging Face Transformers se justifie par trois mécanismes d'optimisation absents de l'implémentation standard : le *continuous batching*, qui permet de traiter dynamiquement les requêtes entrantes sans attendre la constitution d'un batch complet ; le *PagedAttention*, qui gère le cache clé-valeur (KV cache) par pages mémoire à la manière d'un système de mémoire virtuelle, éliminant le gaspillage de VRAM lié à l'allocation statique ; et le *scheduling* asynchrone, qui découple la réception des requêtes de leur traitement GPU. Pour un modèle de 1,7 milliard de paramètres servi sur un GPU unique, ces optimisations permettent de réduire significativement la latence par requête et d'augmenter le débit en conditions de charge concurrente.
+- **Couche API — FastAPI** : Le framework FastAPI expose deux routes HTTP (`/health` et `/generate`) et orchestre le cycle de vie du moteur d'inférence. FastAPI a été retenu pour sa gestion native de l'asynchronisme (compatible avec le moteur asynchrone de vLLM), sa validation automatique des entrées via Pydantic, et la génération automatique de documentation interactive (Swagger UI sur `/docs`). Dans un contexte médical où la traçabilité des interactions est un prérequis d'audit, la validation stricte des entrées et la journalisation systématique des requêtes constituent des garanties essentielles.
+- **Couche conteneur — Docker** : L'application est empaquetée dans une image Docker qui encapsule le code source, les dépendances Python et la configuration, sans inclure les poids du modèle. Les poids sont montés en volume au démarrage du conteneur, ce qui découple le cycle de vie du modèle (mis à jour via MLflow et GCS) de celui de l'application (mis à jour via le pipeline CI/CD). Ce découplage est fondamental : une nouvelle version du code API peut être déployée sans retélécharger les 3,4 Go du modèle, et inversement, un nouveau modèle peut être déployé sans reconstruire l'image Docker.
+
+Le flux de données d'une requête patient suit le chemin suivant : le client envoie une requête POST sur `/generate` avec un prompt textuel ; FastAPI valide les paramètres via le schéma Pydantic `GenerationRequest` ; le prompt est transmis au moteur vLLM qui génère une réponse token par token ; la réponse complète est encapsulée dans un objet `GenerationResponse` et renvoyée au client au format JSON.
+
+### 5.2 Préparation du modèle pour le déploiement
+
+Le modèle entraîné en phases SFT et DPO existe sous forme d'adaptateurs LoRA séparés du modèle de base. Pour le déploiement en production, les adaptateurs sont fusionnés (merged) avec le modèle de base afin de produire un modèle monolithique directement chargeable par vLLM, sans dépendance à la bibliothèque PEFT.
+
+Le script `src/training/generate_model_for_deployment.py` automatise cette opération : il charge le modèle de base, applique les adaptateurs LoRA du meilleur run DPO (identifié via le tag `model_status=champion` dans MLflow), fusionne les poids via `model.merge_and_unload()`, puis enregistre le modèle résultant sur GCS via MLflow. Le chemin de stockage final (`GCS_MERGED_MODEL_PATH`) est celui que le conteneur Docker référence au démarrage pour charger le modèle dans vLLM.
+
+La fusion présente un avantage supplémentaire en termes de performance d'inférence : elle élimine le surcoût de calcul lié à l'application dynamique des adaptateurs LoRA à chaque *forward pass*. Le modèle mergé se comporte comme un modèle standard du point de vue de vLLM, bénéficiant pleinement de toutes ses optimisations.
+
+### 5.3 API d'inférence FastAPI
+
+#### 5.3.1 Cycle de vie applicatif
+
+L'application utilise le pattern *lifespan* de FastAPI pour gérer le chargement et le déchargement du moteur vLLM. Ce pattern, qui remplace les anciens événements `@app.on_event("startup")` / `@app.on_event("shutdown")`, garantit l'exécution du code de nettoyage même en cas d'erreur au démarrage :
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global engine
+    try:
+        engine = VLLMEngine(model_path=GCS_MERGED_MODEL_PATH)
+    except Exception as e:
+        logger.error(f"Erreur lors du chargement du modèle vLLM: {str(e)}")
+    yield
+    engine = None
+```
+
+Le moteur est instancié en variable globale du module. Si le chargement échoue (modèle introuvable, VRAM insuffisante), l'application démarre malgré tout mais l'endpoint `/health` retourne un code `503 Service Unavailable`, signalant à l'orchestrateur que le conteneur n'est pas opérationnel. Ce comportement de dégradation gracieuse évite les boucles de redémarrage : l'application reste accessible pour le diagnostic sans prétendre être fonctionnelle.
+
+#### 5.3.2 Moteur d'inférence vLLM
+
+La classe `VLLMEngine` (`src/api/services/inference.py`) encapsule l'`AsyncLLMEngine` de vLLM et expose une interface simplifiée :
+
+```python
+class VLLMEngine:
+    def __init__(self, model_path: str):
+        engine_args = AsyncEngineArgs(
+            model=model_path, trust_remote_code=True, tensor_parallel_size=1,
+        )
+        self.engine = AsyncLLMEngine.from_engine_args(engine_args)
+
+    async def generate(self, prompt, max_tokens=512, temperature=0.7):
+        sampling_params = SamplingParams(
+            temperature=temperature, max_tokens=max_tokens, top_p=0.95
+        )
+        request_id = str(uuid.uuid4())
+        results_generator = self.engine.generate(prompt, sampling_params, request_id)
+        final_output = None
+        async for request_output in results_generator:
+            final_output = request_output
+        return final_output.outputs[0].text
+```
+
+Le paramètre `tensor_parallel_size=1` configure le modèle pour un GPU unique, adapté au POC. En production avec un modèle 32B+ réparti sur plusieurs GPU, ce paramètre serait ajusté en conséquence. Le `top_p=0.95` complète le contrôle de la température pour le *nucleus sampling*, limitant la génération aux tokens dont la probabilité cumulée ne dépasse pas 95 % — un compromis entre diversité et cohérence pour les réponses médicales. Chaque requête reçoit un identifiant UUID unique (`request_id`) qui permet à vLLM de gérer le multiplexage des requêtes concurrentes dans son scheduler.
+
+#### 5.3.3 Validation des entrées et contrat d'API
+
+Les schémas Pydantic définissent un contrat strict entre le client et l'API :
+
+```python
+class GenerationRequest(BaseModel):
+    prompt: str   = Field(..., min_length=5, max_length=4000)
+    max_tokens: int   = Field(default=512, ge=1, le=2048)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+
+class GenerationResponse(BaseModel):
+    response: str
+```
+
+Les bornes ont été choisies selon les contraintes du modèle et du cas d'usage : `min_length=5` sur le prompt rejette les requêtes vides ou trop courtes pour être médicalement significatives ; `max_length=4000` correspond à la fenêtre de contexte utile du modèle après soustraction des tokens réservés au prompt système et à la génération ; `max_tokens=2048` limite la longueur de la réponse générée pour éviter les générations excessivement longues qui consommeraient inutilement du temps GPU. La `temperature` est bornée entre 0.0 (déterministe) et 2.0 (exploration maximale), avec un défaut de 0.7 adapté au domaine médical où un certain degré de variabilité est acceptable sans compromettre la fiabilité.
+
+Toute requête non conforme est automatiquement rejetée par FastAPI avec un code `422 Unprocessable Entity` et un message détaillant le champ invalide, sans que la requête n'atteigne jamais le moteur d'inférence.
+
+#### 5.3.4 Observabilité et sécurité
+
+Deux mécanismes transversaux complètent l'API :
+
+- **Middleware de journalisation des performances** : Un middleware HTTP intercepte chaque requête et mesure la latence de bout en bout (réception → réponse). Les requêtes vers `/health` sont exclues du logging pour éviter le bruit généré par les sondes de l'orchestrateur (toutes les 30 secondes). Chaque requête `/generate` produit une ligne de log structurée contenant la méthode HTTP, le chemin, le code de retour et la latence en secondes. Ce mécanisme fournit les données brutes pour le suivi de la latence P50/P95 en conditions réelles.
+- **Gestionnaire d'erreurs global** : Un handler d'exception capte toutes les erreurs non anticipées et retourne une réponse JSON générique au client (code 500, message neutre) tout en loggant le détail de l'erreur côté serveur. Ce double comportement est critique en contexte médical : le client ne reçoit jamais de traceback Python susceptible d'exposer des détails d'implémentation ou des chemins de fichiers internes, tandis que l'équipe opérationnelle dispose de l'information nécessaire au diagnostic.
+- **Configuration CORS** : Le middleware CORS est configuré en mode permissif (`allow_origins=["*"]`) pour la phase POC. En production, cette configuration devra être restreinte aux domaines autorisés du CHSA (cf. section 7, roadmap).
+
+### 5.4 Conteneurisation Docker
+
+#### 5.4.1 Structure du Dockerfile
+
+Le `Dockerfile` suit une approche minimaliste adaptée au déploiement d'inférence :
+
+- **Image de base `python:3.11-slim`** : L'image slim réduit la surface d'attaque et la taille de l'image par rapport à l'image complète, tout en conservant les en-têtes de compilation nécessaires à l'installation de vLLM. Python 3.11 a été retenu pour sa compatibilité avec l'écosystème ML (PyTorch, vLLM, Transformers) et son alignement avec la version utilisée en CI.
+- **Séparation code / modèle** : Seuls les dossiers `src/` et `config/` sont copiés dans l'image. Les poids du modèle (environ 3,4 Go pour le modèle mergé) ne sont pas inclus : ils sont montés en volume Docker au démarrage via l'option `-v /chemin/hôte/models:/app/models`. Cette séparation réduit drastiquement le temps de build de l'image (quelques secondes contre plusieurs minutes) et permet de mettre à jour le modèle sans reconstruire l'image.
+- **HEALTHCHECK natif Docker** : L'instruction `HEALTHCHECK` appelle l'endpoint `/health` toutes les 30 secondes, avec un timeout de 10 secondes, un délai initial de 60 secondes (le temps que vLLM charge le modèle en VRAM) et 3 tentatives avant de déclarer le conteneur unhealthy. L'orchestrateur peut ainsi détecter automatiquement un conteneur non fonctionnel et déclencher un redémarrage.
+- **Variables d'environnement** : `PYTHONPATH=/app` garantit la résolution correcte des imports Python quel que soit le répertoire courant du processus. `LANG=C.UTF-8` assure l'encodage correct des caractères français dans les logs et les réponses du modèle.
+
+#### 5.4.2 Contexte de build et .dockerignore
+
+Un fichier `.dockerignore` a été créé pour exclure du contexte de build les dossiers volumineux ou sensibles : `.git`, `data/`, `models/`, `notebooks/`, `.env`, `.venv`. Sans ce fichier, le contexte Docker inclurait l'intégralité du dépôt (données brutes, checkpoints d'entraînement, notebooks Jupyter), ce qui rallongerait considérablement le temps de build et exposerait des fichiers sensibles (clés d'API dans `.env`).
+
+#### 5.4.3 Démarrage du conteneur
+
+Le conteneur est lancé avec accès GPU via le NVIDIA Container Toolkit :
+
+```bash
+docker run -d --name medical-api --gpus all -p 8000:8000 \
+  -v /home/ubuntu/models:/app/models \
+  -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_for_deployment \
+  ghcr.io/<repository>/medical-qwen-api:main
+```
+
+L'API est alors accessible sur `http://<IP_VM>:8000/docs` (Swagger UI) pour les tests interactifs, et sur `http://<IP_VM>:8000/generate` pour les requêtes programmatiques.
+
+### 5.5 Pipeline CI/CD avec GitHub Actions
+
+#### 5.5.1 Périmètre et séparation des responsabilités
+
+Un point d'architecture important est la distinction entre deux pipelines indépendants :
+
+- **Le pipeline CI/CD de déploiement** (objet de cette section) automatise la chaîne tests → build Docker → push registre → déploiement SSH. Il est déclenché par les commits sur le code applicatif (API, configuration, tests) et ne manipule jamais les données d'entraînement.
+- **Le pipeline de données** (section 2.7) orchestre la chaîne DVC (`dvc repro`) de nettoyage, anonymisation et génération des datasets. Il est déclenché manuellement et versionne les données sur GCS.
+
+Cette séparation est fondamentale : le conteneur Docker de déploiement ne contient pas les datasets, le modèle est figé (mergé SFT+DPO). Les datasets appartiennent au pipeline de données, qui constitue une boucle distincte avec son propre mécanisme de versionnement (DVC).
+
+#### 5.5.2 Structure du workflow
+
+Le fichier `.github/workflows/cicd.yml` définit trois jobs exécutés séquentiellement :
+
+- **Job 1 — `code-quality-and-tests`** : Déclenché sur chaque push et pull request vers main. Ce job installe les dépendances de test (sans vLLM, qui nécessite un GPU absent des runners GitHub Actions), exécute le linter Ruff pour le contrôle de qualité du code, puis lance la suite de tests pytest. L'absence de vLLM sur le runner CI est compensée par une stratégie de *mock* décrite en section 5.6.
+- **Job 2 — `build-and-push-docker`** : Exécuté uniquement sur les push vers main (pas sur les pull requests), conditionné à la réussite du job 1. Ce job construit l'image Docker via Buildx, la tague avec les métadonnées du commit (SHA, branche), puis la pousse vers GitHub Container Registry (GHCR). Le cache Docker est géré via GitHub Actions Cache (`cache-from: type=gha`), ce qui accélère les builds successifs en réutilisant les couches inchangées.
+- **Job 3 — `deploy`** : Exécuté après la réussite du job 2, ce job se connecte en SSH à la VM GCP de production, tire la nouvelle image depuis GHCR, arrête le conteneur en cours, et relance un nouveau conteneur avec la dernière version de l'image. Le montage du volume modèle et l'activation GPU sont configurés dans la commande `docker run`.
+
+Ce pipeline garantit qu'aucun code ne parvient en production sans avoir passé les tests et le linter. Le flux complet — du commit au conteneur en production — est entièrement automatisé et ne requiert aucune intervention manuelle.
+
+#### 5.5.3 Gestion des secrets
+
+Les informations sensibles (clé SSH du serveur, adresse IP de la VM, identifiants) sont stockées dans les GitHub Secrets du dépôt (`SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`). Le `GITHUB_TOKEN`, fourni automatiquement par GitHub Actions, est utilisé pour l'authentification auprès de GHCR. Un point de vigilance a été identifié lors de l'audit : le `GITHUB_TOKEN` est transmis au serveur distant via la variable d'environnement `envs` de l'action SSH, ce qui limite le risque d'exposition dans les logs. En production, un Personal Access Token (PAT) dédié et stocké directement sur la VM serait préférable pour une isolation complète.
+
+### 5.6 Stratégie de tests
+
+#### 5.6.1 Contrainte et approche
+
+Le principal défi technique du testing est que vLLM refuse de s'importer sans GPU CUDA, ce qui rend impossible l'exécution des tests d'intégration sur les runners CPU de GitHub Actions. La solution retenue repose sur une injection de mocks dans `sys.modules` avant tout import de `src.api.main` : des modules factices remplacent `vllm` et ses sous-modules, permettant d'importer l'application FastAPI sans dépendance GPU. Le moteur d'inférence est ensuite injecté directement dans le module de l'application (`main_module.engine = ...`) pour éviter de déclencher le lifespan qui tenterait de charger le vrai modèle.
+
+#### 5.6.2 Architecture des tests
+
+La suite de tests (70 tests, exécutés en 2,21 secondes) est organisée en trois couches :
+
+```text
+tests/
+├── conftest.py                     # Fix PYTHONPATH pour la CI
+├── unit/
+│   ├── test_schemas.py             # Validation Pydantic (17 cas)
+│   ├── test_paths.py               # Cohérence config/paths.py
+│   └── test_logger.py              # Logger centralisé
+├── integration/
+│   ├── conftest.py                 # Mock vLLM + fixtures TestClient
+│   ├── test_health.py              # Health check (200 / 503)
+│   ├── test_generate.py            # Endpoint /generate (nominal, invalide, erreurs, contrat)
+│   └── test_middleware.py          # Middleware de logging
+└── smoke/
+    └── test_docker_build.py        # Structure Dockerfile / CI
+```
+
+- **Tests unitaires — Zéro dépendance réseau ou GPU** : Ils valident la logique pure : les bornes exactes des schémas Pydantic (7 cas valides, 8 cas invalides sur `GenerationRequest`, 3 cas sur `GenerationResponse`), la cohérence des chemins dans `config/paths.py` (préfixe `gs://`, extensions `.parquet`, hiérarchie des dossiers), et le bon fonctionnement du logger centralisé.
+- **Tests d'intégration — Avec mock vLLM** : Ils valident le comportement de l'API via le `TestClient` de FastAPI : le health check retourne 200 quand le moteur est chargé et 503 sinon ; l'endpoint `/generate` retourne une réponse valide en cas nominal, rejette les entrées invalides avec un 422, et gère correctement les erreurs moteur (`RuntimeError`, `TimeoutError`) sans exposer de traceback au client. Un test de contrat vérifie que la réponse nominale contient exactement la structure `{"response": str}`, garantissant la non-régression de l'interface.
+- **Tests smoke — Vérification structurelle** : Ils valident l'existence et le contenu des fichiers critiques du déploiement : présence des directives `FROM`, `EXPOSE 8000`, `CMD`, `COPY src/` dans le Dockerfile, existence du `.dockerignore`, et présence des steps `pytest` et `docker` dans le workflow CI.
+
+#### 5.6.3 Couverture et limites
+
+Les 70 tests couvrent les couches unitaire, intégration et smoke, exécutables sans GPU. Une quatrième catégorie de tests — les tests de performance (latence P95, robustesse sur des inputs edge-case, comportement sous charge) — ne peut être exécutée qu'après déploiement sur la VM avec GPU. Ces tests post-déploiement font l'objet de la section 6.
 
 ---
 

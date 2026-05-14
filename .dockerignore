@@ -1,0 +1,34 @@
+data/
+docs/
+notebooks/
+models/
+
+# Dossiers et fichiers cachés / lourds
+.git/
+.dvc/
+.dvcignore
+.vscode/
+.idea/
+.claude/
+
+# Fichiers d'environnement et de configuration locale
+.env
+.env.*
+venv/
+.venv/
+env/
+
+# Fichiers de log
+*.log
+
+# Caches Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Fichiers markdown et doc qui ne servent pas à l'API
+README.md
+RAPPORT_TECHNIQUE.md
+dvc.yaml
+params.yaml

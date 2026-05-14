@@ -48,7 +48,8 @@ quantization_config:
 
 training_arguments:
   sft:
-    per_device_train_batch_size: 1             # ← changé (était 4)
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1            # ← changé (était 4)
     gradient_accumulation_steps: 32            # ← changé (était 8) — effective batch = 1×32 = 32, identique à avant
     learning_rate: 2e-4
     num_train_epochs: 2 # passage à 2 car aucune amélioration de l'eval_loss apres 2 epochs
@@ -72,6 +73,7 @@ training_arguments:
     report_to: "mlflow"
   dpo:
     per_device_train_batch_size: 2
+    per_device_eval_batch_size: 1 
     gradient_accumulation_steps: 16
     learning_rate: 5e-6                        # ← LR plus conservateur pour DPO (préférence vs SFT)
     num_train_epochs: 2

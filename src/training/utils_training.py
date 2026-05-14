@@ -11,6 +11,13 @@ from trl import DPOConfig
 
 from config.logger import logger
 from config.paths import PARAMS_PATH, PROJECT_ROOT
+import os
+
+# Configuration explicite de MLflow via les variables d'environnement
+if "MLFLOW_TRACKING_URI" in os.environ:
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+if "MLFLOW_EXPERIMENT_NAME" in os.environ:
+    mlflow.set_experiment(os.environ["MLFLOW_EXPERIMENT_NAME"])
 
 
 # === load dataset functions ===
@@ -164,6 +171,7 @@ def define_training_arguments(
     kwargs = dict(
         output_dir=checkpoint_output_dir,
         per_device_train_batch_size=params_training_args["per_device_train_batch_size"],
+        per_device_eval_batch_size=params_training_args["per_device_eval_batch_size"],
         gradient_accumulation_steps=params_training_args["gradient_accumulation_steps"],
         learning_rate=float(params_training_args["learning_rate"]),
         num_train_epochs=params_training_args["num_train_epochs"],
@@ -187,7 +195,7 @@ def define_training_arguments(
     )
 
     if stage == "dpo":
-        training_args = DPOConfig(beta=0.1, **kwargs)
+        training_args = DPOConfig(beta=0.1,max_length=512,  **kwargs)
     else:
         training_args = TrainingArguments(**kwargs)
 
@@ -243,5 +251,64 @@ def setup_mlflow_run(stage: str) -> mlflow.ActiveRun:
     logger.info(f"Starting MLflow run: {run_name}")
     return mlflow.start_run(run_name=run_name, tags=tags)
 
+def _load_sft_lora_adapter():
 
+    logger.info("Loading SFT LoRA adapter from the latest champion run...")
+    experiment = mlflow.get_experiment_by_name("sft-qwen3-medical")
 
+    runs = mlflow.search_runs(
+        filter_string='tags.model_status = "champion" and tags.stage = "sft"',
+        order_by=["start_time DESC"],
+        max_results=1,
+        experiment_ids=[experiment.experiment_id]
+    )
+
+    if runs.empty:
+        raise ValueError(
+            "No champion run found for SFT stage. Please train an SFT model first."
+        )
+
+    run_id = runs.iloc[0].run_id
+
+    logger.info(f"Found champion run with ID: {run_id}")
+
+    model = mlflow.artifacts.download_artifacts(f"runs:/{run_id}/lora_trained_model")
+
+    return model
+
+def _load_dpo_lora_adapter() -> str:
+    """Récupère les adaptateurs LoRA du meilleur run DPO depuis MLflow.
+    
+    Cherche dans l'expérience 'sft-qwen3-medical' le run le plus récent
+    taggé model_status=champion et stage=dpo.
+    """
+    logger.info("Loading DPO LoRA adapter from the latest champion run...")
+    experiment = mlflow.get_experiment_by_name("sft-qwen3-medical")
+
+    if experiment is None:
+        raise ValueError(
+            "Experiment 'sft-qwen3-medical' introuvable. "
+            "Vérifie que le run DPO a bien été lancé avec MLFLOW_EXPERIMENT_NAME=sft-qwen3-medical."
+        )
+
+    runs = mlflow.search_runs(
+        filter_string='tags.model_status = "champion" and tags.stage = "dpo"',
+        order_by=["start_time DESC"],
+        max_results=1,
+        experiment_ids=[experiment.experiment_id]
+    )
+
+    if runs.empty:
+        raise ValueError(
+            "No champion run found for DPO stage. "
+            "Please train a DPO model first (train_dpo.py)."
+        )
+
+    run_id = runs.iloc[0].run_id
+    logger.info(f"Found DPO champion run with ID: {run_id}")
+
+    # Le DPOTrainer sauvegarde dans 'dpo_model_trained' (voir train_dpo.py)
+    adapter_path = mlflow.artifacts.download_artifacts(
+        f"runs:/{run_id}/dpo_model_trained"
+    )
+    return adapter_path

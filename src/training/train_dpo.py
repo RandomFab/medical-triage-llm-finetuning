@@ -11,6 +11,7 @@ from trl import DPOTrainer, DPOConfig
 from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
 from src.training.utils_training import (
     define_training_arguments,
+    _load_sft_lora_adapter,
     _get_quantization_config,
     _get_model_name,
     setup_mlflow_run,
@@ -55,31 +56,6 @@ def define_model() -> PeftModel:
 
     return model
 
-
-def _load_sft_lora_adapter():
-
-    logger.info("Loading SFT LoRA adapter from the latest champion run...")
-    experiment = mlflow.get_experiment_by_name("sft-qwen3-medical")
-
-    runs = mlflow.search_runs(
-        filter_string='tags.model_status = "champion" and tags.stage = "sft"',
-        order_by=["start_time DESC"],
-        max_results=1,
-        experiment_ids=[experiment.experiment_id]
-    )
-
-    if runs.empty:
-        raise ValueError(
-            "No champion run found for SFT stage. Please train an SFT model first."
-        )
-
-    run_id = runs.iloc[0].run_id
-
-    logger.info(f"Found champion run with ID: {run_id}")
-
-    model = mlflow.artifacts.download_artifacts(f"runs:/{run_id}/lora_trained_model")
-
-    return model
 
 
 def prepare_dpo_dataset(dataset: pd.DataFrame) -> Dataset:
