@@ -16,11 +16,11 @@ class TestDockerfileStructure:
         content = (PROJECT_ROOT / "Dockerfile").read_text()
         assert "FROM" in content, "Dockerfile sans instruction FROM"
 
-    def test_dockerfile_uses_python_image(self):
+    def test_dockerfile_uses_gpu_image(self):
         content = (PROJECT_ROOT / "Dockerfile").read_text()
-        assert "python:" in content.lower(), (
-            "Le Dockerfile devrait utiliser une image de base Python"
-        )
+        assert "vllm" in content.lower(), (
+            "Le Dockerfile devrait utiliser une image de base vLLM (avec CUDA)"
+    )
 
     def test_dockerfile_exposes_port_8000(self):
         content = (PROJECT_ROOT / "Dockerfile").read_text()
