@@ -98,7 +98,7 @@ jobs:
               ~/models/
 
             # 3. Pull la nouvelle image
-            docker pull ghcr.io/${{ github.repository }}/medical-qwen-api:main
+            docker pull ghcr.io/randomfab/medical-qwen-api:main
 
             # 4. Arrêter et supprimer l'ancien conteneur
             docker stop medical-api || true
@@ -111,4 +111,4 @@ jobs:
               -p 8000:8000 \
               -v ~/models/merged_model_for_deployment:/app/models/merged_model_for_deployment \
               -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_for_deployment \
-              ghcr.io/${{ github.repository }}/medical-qwen-api:main
+              ghcr.io/randomfab/medical-qwen-api:main
