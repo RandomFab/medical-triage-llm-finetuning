@@ -1,4 +1,4 @@
-# 🩺 Fine-Tuning Medical — French Medical QA: Data Pipeline & SFT Training
+# 🩺 Fine-Tuning Medical — POC Agent IA de Triage Médical (CHSA)
 
 A machine learning project that ingests, cleans, anonymizes, and prepares French-language medical QA
 datasets, then fine-tunes Qwen3-1.7B-Base via QLoRA for a medical triage assistant. Targets multiple
@@ -6,7 +6,7 @@ Hugging Face sources, normalizes them into unified SFT `(question, answer)` and 
 `(question, chosen, rejected)` schemas, tokenizes with Qwen3 chat template, and trains with LoRA
 adapters — all orchestrated through reproducible DVC pipelines and tracked with MLflow.
 
-![Python](https://img.shields.io/badge/Python-3.13-blue.svg?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white)
 ![Pandas](https://img.shields.io/badge/Pandas-3.0.2-150458.svg?logo=pandas&logoColor=white)
 ![HuggingFace](https://img.shields.io/badge/HuggingFace-Transformers-FFD21E.svg?logo=huggingface&logoColor=black)
 ![PEFT](https://img.shields.io/badge/PEFT-LoRA%2FQLoRA-FF6F00.svg)
@@ -14,7 +14,11 @@ adapters — all orchestrated through reproducible DVC pipelines and tracked wit
 ![GCS](https://img.shields.io/badge/Google_Cloud_Storage-3.10.1-4285F4.svg?logo=googlecloud&logoColor=white)
 ![DVC](https://img.shields.io/badge/DVC-3.67+-945DD6.svg?logo=dvc&logoColor=white)
 ![MLflow](https://img.shields.io/badge/MLflow-Tracking-0194E2.svg?logo=mlflow&logoColor=white)
-
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED.svg?logo=docker&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF.svg?logo=githubactions&logoColor=white)
+![vLLM](https://img.shields.io/badge/Inference-vLLM-blueviolet.svg)
+![pytest](https://img.shields.io/badge/Tests-70_passed-brightgreen.svg?logo=pytest)
 ---
 
 ## 🎯 Objective
@@ -43,6 +47,19 @@ medical triage assistant for the Centre Hospitalier Saint-Aurélien (CHSA).
 - 📊 Track experiments with MLflow, save checkpoints, and auto-resume after interruption
 - ✅ Achieved train loss 1.112 / eval loss 1.189 after 3 epochs (~2h41 on T4 GPU)
 
+**DPO alignment (Step 3 — in progress):**
+- 🎯 Align the SFT model on human preferences using Direct Preference Optimization
+- 📐 Fine-tune with `(question, chosen, rejected)` triplets from UltraMedical-Preference
+- 🔗 Load the SFT champion automatically from MLflow via `model_status=champion` tag
+- 📊 Monitor `rewards/chosen`, `rewards/rejected`, and `rewards/margins` in MLflow
+- ⚖️ Conservative `beta=0.1` to preserve medical knowledge acquired during SFT
+
+**Deployment & CI/CD (Step 4 — in progress):**
+- ⚡ Serve the merged model (base + LoRA) via **vLLM** for optimized inference (continuous batching, PagedAttention)
+- 🌐 Expose a REST API with **FastAPI** (lifespan pattern, Pydantic validation, latency middleware)
+- 🐳 Containerize with **Docker** and deploy on a GCP VM via SSH
+- 🔄 Automate tests → build → push → deploy with **GitHub Actions** (3-job pipeline)
+- 🧪 70 automated tests across unit / integration / smoke layers — GPU-free CI via vLLM mocking
 ---
 
 ## ✨ Features
@@ -77,6 +94,30 @@ medical triage assistant for the Centre Hospitalier Saint-Aurélien (CHSA).
 - ✅ **MLflow integration** for experiment tracking (loss curves, hyperparameters, model artifacts)
 - ✅ Externalized configuration: all hyperparameters in `params.yaml` (LoRA, quantization, training arguments)
 
+### DPO alignment
+- ✅ `train_dpo.py` — full DPO training pipeline with `DPOTrainer` (TRL)
+- ✅ Automatic SFT champion retrieval from MLflow (tag-based: `model_status=champion`, `stage=sft`)
+- ✅ `format_dpo_chat()` — formats `(question, chosen, rejected)` into Qwen3 conversational template
+- ✅ `beta=0.1` — conservative KL penalty preserving medical knowledge from SFT
+- ✅ Separate MLflow experiment `dpo-qwen3-medical` with `rewards/*` metrics tracking
+- ✅ LoRA adapters merged into base model post-training for deployment (`generate_model_for_deployment.py`)
+
+### Deployment & API
+- ✅ `src/api/main.py` — FastAPI app with `lifespan` pattern, latency middleware, global error handler
+- ✅ `src/api/services/inference.py` — `VLLMEngine` wrapping `AsyncLLMEngine` with `AsyncMock` for CI
+- ✅ `src/api/schemas.py` — `GenerationRequest` / `GenerationResponse` with strict Pydantic validation
+- ✅ `Dockerfile` — multi-stage build, `HEALTHCHECK`, `ENV PYTHONPATH=/app`, `ENV LANG=C.UTF-8`
+- ✅ `.dockerignore` — excludes `data/`, `models/`, `.git`, `.env` from build context
+- ✅ GitHub Actions CI/CD — 3 jobs: `code-quality-and-tests` → `build-and-push-docker` → `deploy`
+- ✅ GHCR image registry with commit SHA tagging
+- ✅ SSH-based deployment to GCP VM with `docker run --gpus all`
+
+### Testing
+- ✅ **70 tests, 3 layers**: unit (Pydantic schemas, path config, logger) + integration (API with mocked vLLM) + smoke (Dockerfile & CI structure)
+- ✅ `tests/conftest.py` — PYTHONPATH fix for CI runners
+- ✅ Integration fixtures: vLLM injected via `sys.modules` mock + `AsyncMock` for GPU-free CI
+- ✅ API contract test: enforces exact `{"response": str}` schema — explicit guard against unintended field changes
+- ✅ `ruff check .` enforced in CI
 ---
 
 ## 📊 Architecture
@@ -232,22 +273,36 @@ FINE-TUNING_MEDICAL/
 │       └── ultramedical_analysis.ipynb
 │
 ├── 📂 src/
-│   ├── 📂 processing/
-│   │   ├── __init__.py
-│   │   ├── mediqal_cleaning.py               # MediQAL cleaning pipeline
-│   │   ├── frenchmedmcqa_cleaning.py         # FrenchMedMCQA cleaning pipeline
-│   │   ├── medquad_cleaning.py               # MedQuad cleaning pipeline
-│   │   ├── ultramed_cleaning.py              # UltraMedical SFT + DPO cleaning
-│   │   ├── anonymisation.py                  # Presidio + spaCy PII anonymizer (FR/EN)
-│   │   ├── utils_cleaning.py                 # Shared utilities (sampling, splitting, tokens…)
-│   │   ├── 📂 sft_dataset/
-│   │   │   └── generate_sft_dataset.py       # Stage 5 — balanced SFT assembly
-│   │   └── 📂 dpo_dataset/
-│   │       └── generate_dpo_dataset.py       # Stage 6 — DPO preference assembly
+│   ├── 📂 api/ 
+│   │   ├── main.py                       # FastAPI app (lifespan, middleware, error handler)
+│   │   ├── schemas.py                    # Pydantic request/response models
+│   │   └── 📂 services/
+│   │       └── inference.py              # VLLMEngine (AsyncLLMEngine wrapper)
 │   └── 📂 training/
-│       ├── __init__.py
-│       ├── utils_training.py                 # Chat template, tokenization, label masking
-│       └── train_sft.py                      # SFT training: QLoRA + LoRA + Trainer
+│       ├── train_sft.py
+│       ├── train_dpo.py
+│       ├── utils_training.py
+│       └── generate_model_for_deployment.py (merge LoRA + push GCS)
+│
+├── 📂 tests/                       
+│   ├── conftest.py                       # PYTHONPATH fix for CI
+│   ├── 📂 unit/
+│   │   ├── test_schemas.py
+│   │   ├── test_paths.py
+│   │   └── test_logger.py
+│   ├── 📂 integration/
+│   │   ├── conftest.py                   # Mock vLLM + TestClient fixtures
+│   │   ├── test_health.py
+│   │   ├── test_generate.py
+│   │   └── test_middleware.py
+│   └── 📂 smoke/
+│       └── test_docker_build.py
+│
+├── Dockerfile                     
+├── .dockerignore                         
+├── .github/
+│   └── workflows/
+│       └── cicd.yml                      # 3-job CI/CD pipeline
 │
 ├── 🗂️ dvc.yaml                               # 6-stage DVC pipeline definition
 ├── 🗂️ dvc.lock                               # Locked hashes for reproducibility
@@ -295,83 +350,30 @@ dvc status
 All tunable parameters live in `params.yaml`. Changing any value and re-running `dvc repro`
 automatically invalidates the downstream stages.
 
+
 #### Data sampling parameters
 
-```yaml
-sft:
-  target_samples: 5000     # Total rows in the final SFT dataset
-  random_state: 42          # Reproducibility seed
-  val_size: 0.2             # Fraction allocated to validation
-  test_size: 0.1            # Fraction allocated to test
-  source_datasets:          # Parquet files relative to data/processed/
-    - mediqal_dataset/mediqal.parquet
-    - frenchmedmcqa_dataset/frenchmedmcqa.parquet
-    - medquad_dataset/medquad.parquet
-    - ultramed_dataset/ultramed_SFT.parquet
+All sampling parameters (target size, split ratios, source datasets) are defined in
+[`params.yaml`](params.yaml) under the `sft` and `dpo` keys, and are tracked by DVC
+as explicit stage dependencies — meaning any change to these values automatically
+invalidates the downstream `generate_sft` and `generate_dpo` stages.
 
-dpo:
-  target_samples: 5000
-  random_state: 42
-  val_size: 0.2
-  test_size: 0.1
-  source_datasets:
-    - ultramed_dataset/ultramed_DPO.parquet
-```
 
 #### LoRA & model configuration
 
-```yaml
-lora_config:
-  r: 16                    # Rank of LoRA adapters
-  lora_alpha: 32            # Scaling factor (alpha/r = 2)
-  target_modules:           # All linear projections in Qwen3
-    - "q_proj"
-    - "v_proj"
-    - "k_proj"
-    - "o_proj"
-    - "gate_proj"
-    - "up_proj"
-    - "down_proj"
-  lora_dropout: 0.05
-  task_type: "CAUSAL_LM"
-
-sft_model:
-  model_name: "Qwen/Qwen3-1.7B-Base"
-  system_prompt: "Tu es un agent de triage médical aux urgences..."
-  max_length: 512           # Max sequence length (tokens)
-
-quantization_config:
-  load_in_4bit: True
-  bnb_4bit_compute_dtype: "float16"
-  bnb_4bit_use_double_quant: True
-  bnb_4bit_quant_type: "nf4"
-```
+LoRA rank, target modules, quantization settings, and the system prompt are all defined
+in [`params.yaml`](params.yaml) under `lora_config`, `sft_model`, and `quantization_config`.
+Key values at a glance: rank 16, alpha 32, 4-bit NF4 quantization, 7 target modules
+(all attention + MLP projections), max sequence length 512 tokens.
 
 #### Training arguments
 
-```yaml
-training_arguments:
-  per_device_train_batch_size: 1    # Physical batch (T4 constraint)
-  gradient_accumulation_steps: 32   # Effective batch = 1 × 32 = 32
-  learning_rate: 2e-4               # Higher LR for LoRA (frozen base)
-  num_train_epochs: 3
-  warmup_steps: 30                  # ~10% of total steps
-  lr_scheduler_type: "cosine"
-  eval_strategy: "steps"
-  eval_steps: 50
-  save_strategy: "steps"
-  save_steps: 50
-  save_total_limit: 3
-  logging_steps: 10
-  load_best_model_at_end: True
-  bf16: False                       # T4 does not support bf16
-  fp16: True
-  gradient_checkpointing: True
-  optim: "paged_adamw_8bit"
-  metric_for_best_model: "eval_loss"
-  greater_is_better: False
-  report_to: "mlflow"
-```
+All training hyperparameters for both SFT and DPO are centralized in
+[`params.yaml`](params.yaml) under `training_arguments.sft` and `training_arguments.dpo`.
+The key difference between the two stages: SFT uses `lr=2e-4` (LoRA adapts aggressively
+on new domain), while DPO uses `lr=5e-6` (fine-grained preference alignment without
+destabilizing acquired medical knowledge). Both run for 2 epochs on a T4 GPU (FP16,
+`paged_adamw_8bit`, effective batch size 32 via gradient accumulation).
 
 > 💡 Stages 5 and 6 declare their `params:` dependencies explicitly in `dvc.yaml`, so DVC detects
 > parameter changes and only reruns those stages — not the cleaning stages.
@@ -502,7 +504,7 @@ splits.
 
 ### Prerequisites
 
-- Python **3.13** (enforced via `.python-version`)
+- Python **3.11+** (3.10 minimum pour la CI, 3.11 recommandé en local)
 - [uv](https://docs.astral.sh/uv/) package manager
 - [DVC](https://dvc.org/) **3.67+** (included in the `dev` dependency group)
 - A Google Cloud project with a GCS bucket named `p14-medical-data` (or equivalent)
@@ -528,6 +530,43 @@ source .venv/bin/activate
 # 3. Download spaCy language models (required by the anonymization module)
 python -m spacy download fr_core_news_md
 python -m spacy download en_core_web_md
+```
+### Running the API locally (without GPU)
+
+```bash
+# Install API dependencies
+uv pip install fastapi uvicorn pydantic httpx
+
+# Run with mocked vLLM engine (no GPU required)
+uvicorn src.api.main:app --reload --port 8000
+# → Swagger UI available at http://localhost:8000/docs
+```
+
+### Running the API in Docker (with GPU)
+
+```bash
+docker build -t medical-qwen-api .
+docker run -d --name medical-api --gpus all -p 8000:8000 \
+  -v /path/to/models:/app/models \
+  -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_for_deployment \
+  medical-qwen-api
+```
+
+### Running tests
+
+```bash
+# Unit + integration + smoke (no GPU required)
+pytest tests/ -v
+
+# Expected output: 70 passed
+```
+
+### Launching DPO training (after SFT champion is available in MLflow)
+
+```bash
+MLFLOW_TRACKING_URI=http://<your-mlflow-server>:5000 \
+MLFLOW_EXPERIMENT_NAME=dpo-qwen3-medical \
+python -m src.training.train_dpo
 ```
 
 ### Running the ingestion notebook
@@ -589,6 +628,45 @@ Training outputs:
 
 > 💡 On Google Colab, upload the project files and run the training script in a notebook cell.
 > The checkpoint resume mechanism handles session timeouts automatically.
+
+---
+
+## 🌐 API Reference
+
+The deployed endpoint exposes two routes:
+
+### `GET /health`
+Returns `200` if the vLLM engine is loaded and ready, `503` otherwise.
+
+```json
+{"status": "healthy", "model": "merged_qwen3_medical"}
+```
+
+### `POST /generate`
+Generates a medical triage response.
+
+**Request body:**
+```json
+{
+  "prompt": "Patient se plaint de douleurs thoraciques irradiant dans le bras gauche depuis 20 minutes.",
+  "max_tokens": 512,
+  "temperature": 0.1
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Niveau de priorité : URGENCE MAXIMALE. ..."
+}
+```
+
+**Validation constraints:**
+- `prompt`: 10–4096 characters
+- `max_tokens`: 1–2048
+- `temperature`: 0.0–2.0
+
+Swagger UI is available at `http://<IP_VM>:8000/docs`.
 
 ---
 
