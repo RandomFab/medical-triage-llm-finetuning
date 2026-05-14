@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pandas
 from config.logger import logger
+from sklearn.model_selection import train_test_split
 
 
 # === Cleaning helper functions ===
@@ -83,7 +84,7 @@ def save_cleaned_data_to_gcs(
         blob.upload_from_string(
             parquet_buffer.getvalue(), content_type="application/octet-stream"
         )
-        logger.info(f"Successfully uploaded cleaned data to GCS")
+        logger.info("Successfully uploaded cleaned data to GCS")
     except Exception as e:
         logger.error(f"Error uploading to GCS: {str(e)}", exc_info=True)
         raise
@@ -171,7 +172,7 @@ def merge_raw_data_splits(datasets) -> pd.DataFrame:
     Returns:
     pd.DataFrame: A single merged DataFrame containing all splits.
     """
-    logger.info(f"Merging raw data splits")
+    logger.info("Merging raw data splits")
 
     merged_df = pd.DataFrame()
 
@@ -205,7 +206,6 @@ def add_metadata(df:pandas.DataFrame, language:str, question_type:str, confidenc
     df["dataset_name"] = dataset_name
     return df
 
-from functools import lru_cache
 @lru_cache(maxsize=1)
 def _get_qwen_tokenizer():
     """Chargé une seule fois par process (lru_cache)."""
@@ -319,7 +319,7 @@ def collect_balanced_samples(
     return pd.concat(collected, ignore_index=True)
 
 # === Splitting helper functions ===
-from sklearn.model_selection import train_test_split
+
 
 def split_dataset(df: pd.DataFrame, random_state: int = 42, val_size: float = 0.2, test_size: float = 0.1) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """

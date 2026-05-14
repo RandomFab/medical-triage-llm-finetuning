@@ -6,7 +6,7 @@ import torch
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer_utils import get_last_checkpoint
 from config.logger import logger
-from transformers import BitsAndBytesConfig, AutoModelForCausalLM, TrainingArguments
+from transformers import BitsAndBytesConfig, AutoModelForCausalLM
 from trl import DPOTrainer, DPOConfig
 from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
 from src.training.utils_training import (

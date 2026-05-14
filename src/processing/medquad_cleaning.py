@@ -4,8 +4,6 @@ from .utils_cleaning import (
     merge_raw_data_splits,
     save_cleaned_data_local,
     drop_duplicates,
-    transform_correct_answers_to_text,
-    create_ground_truth_answer_column,
 )
 import pandas as pd
 from config.logger import logger
@@ -72,5 +70,5 @@ if __name__ == "__main__":
         df_cleaned,
         PROCESSED_DATA_DIR
         / "medquad_dataset"
-        / f"medquad.parquet",
+        / "medquad.parquet",
     )

@@ -23,9 +23,9 @@ sys.modules["vllm.engine.async_llm_engine"] = _vllm_mock.engine.async_llm_engine
 sys.modules["vllm.sampling_params"] = _vllm_mock.sampling_params
 
 # Maintenant on peut importer l'app en toute sécurité
-from fastapi.testclient import TestClient
-from src.api.main import app
-import src.api.main as main_module
+from fastapi.testclient import TestClient # noqa: E402
+from src.api.main import app # noqa: E402
+import src.api.main as main_module # noqa: E402
 
 
 @pytest.fixture

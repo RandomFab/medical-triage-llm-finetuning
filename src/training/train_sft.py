@@ -27,7 +27,6 @@ from config.paths import (
     ROOT_MODEL_DIR,
     SFT_TRAIN_DATASET_PATH,
     SFT_VAL_DATASET_PATH,
-    SFT_TEST_DATASET_PATH,
 )
 from src.training.utils_training import (
     _get_qwen_tokenizer,
@@ -96,7 +95,7 @@ def tokenize_flow(pd_dataset_path: Path) -> Dataset:
 
 
 def get_data_collator(tokenizer):
-    logger.info(f"Generating data collator for sequence-to-sequence...")
+    logger.info("Generating data collator for sequence-to-sequence...")
 
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
 

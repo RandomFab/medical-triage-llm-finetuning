@@ -1,10 +1,9 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import os
 import time
 from contextlib import asynccontextmanager
-from config.paths import ROOT_MODEL_DIR, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH,GCS_MERGED_MODEL_PATH
+from config.paths import GCS_MERGED_MODEL_PATH
 from config.logger import logger
 from .services.inference import VLLMEngine
 from .schemas import GenerationRequest, GenerationResponse
@@ -90,7 +89,6 @@ async def generate_text(request: GenerationRequest):
 async def health_check():
     # Vérification avancée : le moteur d'inférence est-il bien en ligne ?
     model_status = "loaded" if engine else "not_loaded"
-    status_code = 200 if engine else 503
     
     if not engine:
         raise HTTPException(status_code=503, detail="Modèle non initialisé")

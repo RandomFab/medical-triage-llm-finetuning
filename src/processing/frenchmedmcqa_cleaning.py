@@ -107,5 +107,5 @@ if __name__ == "__main__":
         df_cleaned,
         PROCESSED_DATA_DIR
         / "frenchmedmcqa_dataset"
-        / f"frenchmedmcqa.parquet",
+        / "frenchmedmcqa.parquet",
     )

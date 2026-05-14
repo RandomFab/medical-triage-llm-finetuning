@@ -10,8 +10,9 @@ from transformers import TrainingArguments
 from trl import DPOConfig
 
 from config.logger import logger
-from config.paths import PARAMS_PATH, PROJECT_ROOT
+from config.paths import PARAMS_PATH
 import os
+from functools import lru_cache
 
 # Configuration explicite de MLflow via les variables d'environnement
 if "MLFLOW_TRACKING_URI" in os.environ:
@@ -35,7 +36,7 @@ def transform_ds_from_pandas_to_hf(dataset: pd.DataFrame) -> Dataset:
     return hf_dataset
 
 # === formatting functions for Qwen ===
-from functools import lru_cache
+
 
 
 @lru_cache(maxsize=1)
