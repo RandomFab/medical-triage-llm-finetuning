@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data (tracked by DVC)
+/data
+
+# models
+/models
+
+# documentation
+/docs
+
+# secrets
+.env

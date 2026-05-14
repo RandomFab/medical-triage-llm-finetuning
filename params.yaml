@@ -1,0 +1,97 @@
+sft:
+  target_samples: 5000
+  random_state: 42
+  val_size: 0.2
+  test_size: 0.1
+  source_datasets:
+    - mediqal_dataset/mediqal.parquet
+    - frenchmedmcqa_dataset/frenchmedmcqa.parquet
+    - medquad_dataset/medquad.parquet
+    - ultramed_dataset/ultramed_SFT.parquet
+dpo:
+  target_samples: 5000
+  random_state: 42
+  val_size: 0.2
+  test_size: 0.1
+  source_datasets:
+    - ultramed_dataset/ultramed_DPO.parquet
+
+
+lora_config:
+  r: 16
+  lora_alpha: 32
+  target_modules:
+    - "q_proj"
+    - "v_proj"
+    - "k_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.05
+  task_type: "CAUSAL_LM"
+
+sft_model:
+  model_name: "Qwen/Qwen3-1.7B-Base"
+  system_prompt: "Tu es un agent de triage médical aux urgences du Centre Hospitalier Saint-Aurélien.
+                    Tu collectes les informations cliniques du patient (symptômes, durée, antécédents, constantes vitales) puis tu attribues un niveau d'urgence parmi trois catégories : maximale, modérée ou différée.
+                    En cas de suspicion d'urgence vitale, signale-le immédiatement.
+                    Tu rédiges un bilan synthétique comprenant les symptômes relevés, le niveau d'urgence attribué et les hypothèses diagnostiques.
+                    Réponds en français. Tu assistes le personnel soignant mais ne remplace jamais l'avis d'un médecin."
+  max_length: 512
+
+quantization_config:
+  load_in_4bit: True
+  bnb_4bit_compute_dtype: "float16"          # ← changé (était bfloat16)
+  bnb_4bit_use_double_quant: True
+  bnb_4bit_quant_type: "nf4"
+
+training_arguments:
+  sft:
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1            # ← changé (était 4)
+    gradient_accumulation_steps: 32            # ← changé (était 8) — effective batch = 1×32 = 32, identique à avant
+    learning_rate: 2e-4
+    num_train_epochs: 2 # passage à 2 car aucune amélioration de l'eval_loss apres 2 epochs
+    warmup_steps: 30
+    lr_scheduler_type: "cosine"
+    eval_strategy: "steps"
+    eval_steps: 50
+    save_strategy: "steps"
+    save_steps: 50
+    save_total_limit: 3
+    logging_steps: 10
+    load_best_model_at_end: True
+    bf16: False                                # ← changé (était True)
+    fp16: True                                 # ← ajouté
+    gradient_checkpointing: True               # ← ajouté
+    gradient_checkpointing_kwargs:             # ← ajouté
+      use_reentrant: False
+    optim: "paged_adamw_8bit"                  # ← ajouté
+    metric_for_best_model: "eval_loss"
+    greater_is_better: False
+    report_to: "mlflow"
+  dpo:
+    per_device_train_batch_size: 2
+    per_device_eval_batch_size: 1 
+    gradient_accumulation_steps: 16
+    learning_rate: 5e-6                        # ← LR plus conservateur pour DPO (préférence vs SFT)
+    num_train_epochs: 2
+    warmup_steps: 30
+    lr_scheduler_type: "cosine"
+    eval_strategy: "steps"
+    eval_steps: 50
+    save_strategy: "steps"
+    save_steps: 50
+    save_total_limit: 3
+    logging_steps: 10
+    load_best_model_at_end: True
+    bf16: False
+    fp16: False
+    gradient_checkpointing: True
+    gradient_checkpointing_kwargs:
+      use_reentrant: False
+    optim: "paged_adamw_8bit"
+    metric_for_best_model: "eval_loss"
+    greater_is_better: False
+    report_to: "mlflow"

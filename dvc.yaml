@@ -1,0 +1,65 @@
+stages:
+  clean_mediqal:
+    cmd: python -m src.processing.mediqal_cleaning
+    deps:
+      - src/processing/mediqal_cleaning.py
+      - src/processing/utils_cleaning.py
+      - config/paths.py
+    outs:
+      - data/processed/mediqal_dataset
+
+  clean_medquad:
+    cmd: python -m src.processing.medquad_cleaning
+    deps:
+      - src/processing/medquad_cleaning.py
+      - src/processing/utils_cleaning.py
+      - config/paths.py
+    outs:
+      - data/processed/medquad_dataset
+
+  clean_frenchmedmcqa:
+    cmd: python -m src.processing.frenchmedmcqa_cleaning
+    deps:
+      - src/processing/frenchmedmcqa_cleaning.py
+      - src/processing/utils_cleaning.py
+      - config/paths.py
+    outs:
+      - data/processed/frenchmedmcqa_dataset
+
+  clean_ultramed:
+    cmd: python -m src.processing.ultramed_cleaning
+    deps:
+      - src/processing/ultramed_cleaning.py
+      - src/processing/utils_cleaning.py
+      - config/paths.py
+    outs:
+      - data/processed/ultramed_dataset
+
+  generate_sft:
+    cmd: python -m src.processing.sft_dataset.generate_sft_dataset
+    deps:
+      - src/processing/sft_dataset/generate_sft_dataset.py
+      - config/paths.py
+      - data/processed/mediqal_dataset
+      - data/processed/medquad_dataset
+      - data/processed/frenchmedmcqa_dataset
+      - data/processed/ultramed_dataset
+    params:
+      - sft.target_samples
+      - sft.random_state
+      - sft.source_datasets
+    outs:
+      - data/processed/sft_dataset
+
+  generate_dpo:
+    cmd: python -m src.processing.dpo_dataset.generate_dpo_dataset
+    deps:
+      - src/processing/dpo_dataset/generate_dpo_dataset.py
+      - config/paths.py
+      - data/processed/ultramed_dataset
+    params:
+      - dpo.target_samples
+      - dpo.random_state
+      - dpo.source_datasets
+    outs:
+      - data/processed/dpo_dataset
