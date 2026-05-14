@@ -60,7 +60,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/medical-qwen-api
+          images: ghcr.io/${{ github.repository_owner }}/medical-qwen-api
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
