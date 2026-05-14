@@ -950,7 +950,75 @@ Cette architecture de tags permet de rejouer la chaîne complète à tout moment
 
 ### 4.8 Résultats de l'entraînement DPO
 
-*[À compléter après exécution du run DPO]*
+Le run DPO (`dpo_qwen3-1.7b-base_qlora_r16_bf16_T4`, run ID `7001354881a1`) a été exécuté
+sur GPU T4 (Google Colab) pendant **8h31** pour 220 steps (2 epochs sur 3 500 triplets,
+batch effectif de 32). Les métriques sont tracées toutes les 10 steps en train,
+toutes les 20 steps en évaluation.
+
+#### 4.8.1 Signal d'alignement : rewards/chosen, rejected et margins
+
+Les trois métriques de récompense constituent l'indicateur principal de la qualité
+de l'alignement DPO.
+
+| Métrique | Step 10 | Step 220 | Variation |
+|---|---|---|---|
+| `rewards/chosen` (train) | −0.0005 | −0.2742 | −0.274 |
+| `rewards/rejected` (train) | −0.0009 | −0.4909 | −0.490 |
+| `rewards/margins` (train) | +0.0004 | +0.217 | +0.216 |
+| `rewards/chosen` (eval) | −0.0051 | −0.246 | −0.241 |
+| `rewards/rejected` (eval) | −0.0143 | −0.439 | −0.425 |
+| `rewards/margins` (eval) | +0.009 | +0.194 | +0.185 |
+
+**Interprétation.** Les deux rewards sont négatifs et décroissants — c'est le comportement
+attendu sous DPO : le modèle s'éloigne du modèle de référence (SFT) pour les deux types
+de réponses, ce qui se traduit par une diminution du log-ratio relatif. Ce qui importe
+n'est pas le signe absolu mais l'écart entre les deux : **le rejected se dégrade 1,79× plus
+vite que le chosen** (−0.490 vs −0.274 sur le train). Le modèle apprend bien à pénaliser
+les réponses de moindre qualité plus fortement que les réponses préférentielles.
+
+La `rewards/margin` (= chosen − rejected) croît de +0.0004 à +0.217 en train et de
++0.009 à +0.194 en évaluation. Cette marge positive et croissante confirme que le modèle
+discrimine de mieux en mieux les réponses chosen des réponses rejected tout au long
+de l'entraînement. Sur le jeu d'évaluation, la marge se stabilise en plateau autour de
++0.193–0.194 entre les steps 180 et 220, ce qui indique que le modèle a convergé sans
+signe de surapprentissage : il continue de discriminer sur les données non vues avec
+la même efficacité que sur les données d'entraînement.
+
+#### 4.8.2 Loss DPO
+
+| Métrique | Step initial | Step final | Variation |
+|---|---|---|---|
+| Train loss | 0.693 | 0.601 | −0.092 (−13,3%) |
+| Eval loss | 0.689 | 0.621 | −0.068 (−9,9%) |
+
+La train loss DPO démarre à 0.693 — proche de log(2) ≈ 0.693, valeur théorique d'un
+modèle qui ne discrimine pas encore chosen et rejected (probabilité uniforme 50/50).
+Elle décroît progressivement jusqu'à 0.601 au step 160, puis oscille légèrement en
+fin de run (0.586–0.627), reflet de la variabilité naturelle des batches de taille 1.
+
+L'eval loss suit une trajectoire monotone décroissante de 0.689 à 0.621, avec un plateau
+très marqué entre les steps 160 et 220 (variation < 0.001). Ce comportement est cohérent
+avec ce qu'on observe sur les eval rewards/margins : le modèle a convergé vers une
+capacité de discrimination stable, sans dégradation ni surapprentissage détectables
+sur le jeu de validation.
+
+L'écart train/eval loss reste faible et stable (≈ 0.02 en fin de run), ce qui confirme
+la bonne généralisation du modèle aligné sur des triplets non vus.
+
+#### 4.8.3 Infrastructure et durée
+
+L'entraînement DPO a été réalisé dans les mêmes conditions que le SFT : GPU T4 (16 Go
+VRAM) sur Google Colab, quantification 4-bit NF4, gradient checkpointing activé.
+La durée de 8h31 (vs 2h41 pour le SFT) s'explique par le coût plus élevé du forward
+pass DPO : le `DPOTrainer` calcule les probabilités sur les deux séquences (chosen et
+rejected) à chaque step, en comparaison avec le modèle de référence gelé — soit
+approximativement 2× plus de calcul par batch que le SFT.
+
+Le modèle DPO final (`dpo_model_trained`) a été sauvegardé sous forme d'adaptateurs
+LoRA dans `models/dpo_model_trained/` et pushé vers GCS via MLflow (tag
+`model_status=champion`, `stage=dpo`). Il a ensuite été mergé avec le modèle de base
+Qwen3-1.7B-Base via `generate_model_for_deployment.py` pour produire le modèle
+monolithique chargé par vLLM en production.
 
 L'analyse des résultats portera sur les axes suivants :
 

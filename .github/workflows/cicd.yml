@@ -25,24 +25,19 @@ jobs:
 
       - name: Install dependencies for testing
         run: |
-          uv pip install --system fastapi uvicorn pytest httpx pydantic ruff
-          # Note: vLLM nécessite un GPU, on évite donc de l'installer entièrement 
-          # sur le runner CPU standard de GitHub Actions pour de simples tests unitaires.
+          uv pip install --system fastapi uvicorn pytest httpx pydantic ruff python-dotenv
 
       - name: Run code quality checks (Ruff)
-        run: |
-          ruff check .
+        run: ruff check .
 
       - name: Run tests
-        run: |
-          pytest tests/
+        run: pytest tests/
 
   build-and-push-docker:
     needs: code-quality-and-tests
     runs-on: ubuntu-latest
-    # Condition : Ne construire l'image que si on pousse sur la branche main (et pas juste sur une PR)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,14 +46,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry (GHCR)
-        # Vous devez configurer les permissions GITHUB_TOKEN dans les paramètres de votre dépôt
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -78,26 +72,39 @@ jobs:
     needs: build-and-push-docker
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+
     steps:
-      - name: Deploy to Cloud server
-        # Ceci est un exemple générique pour se connecter à un serveur (ex: VM AWS/GCP/Azure)
-        # et lui dire de pull la nouvelle image et redémarrer le conteneur.
+      - name: Deploy to GCP VM
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: GITHUB_TOKEN
           script: |
-            echo $GITHUB_TOKEN | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # 1. Login GHCR avec le PAT dédié
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io \
+              -u ${{ github.actor }} --password-stdin
+
+            # 2. Télécharger le modèle mergé DPO depuis GCS
+            # Note : le run ID MLflow est fixé au run de merge DPO actuel.
+            # Limitation connue : à mettre à jour si un nouveau merge est effectué.
+            mkdir -p ~/models
+            gsutil -m cp -r \
+              gs://p14-medical-data/mlflow-artifacts/0/f27d13653f474388a04775d75e1426bd/artifacts/merged_model_for_deployment \
+              ~/models/
+
+            # 3. Pull la nouvelle image
             docker pull ghcr.io/${{ github.repository }}/medical-qwen-api:main
+
+            # 4. Arrêter et supprimer l'ancien conteneur
             docker stop medical-api || true
             docker rm medical-api || true
-            # Note: Le montage du dossier models dépend du chemin sur votre serveur
-            docker run -d --name medical-api --gpus all -p 8000:8000 \
-              -v /home/ubuntu/models:/app/models \
+
+            # 5. Lancer le nouveau conteneur avec GPU et modèle monté en volume
+            docker run -d \
+              --name medical-api \
+              --gpus all \
+              -p 8000:8000 \
+              -v ~/models/merged_model_for_deployment:/app/models/merged_model_for_deployment \
               -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_for_deployment \
               ghcr.io/${{ github.repository }}/medical-qwen-api:main
