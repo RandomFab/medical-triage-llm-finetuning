@@ -4,7 +4,7 @@ from config.logger import logger
 from config.paths import (
     PROCESSED_DATA_DIR,
     PROJECT_ROOT,
-    DPO_DATASET_DIR,
+    DPO_RAW_DATASET_PATH,
     DPO_TEST_DATASET_PATH,
     DPO_TRAIN_DATASET_PATH,
     DPO_VAL_DATASET_PATH,
@@ -14,6 +14,7 @@ from src.processing.utils_cleaning import (
     add_token_counts,
     collect_balanced_samples,
     split_dataset,
+    save_cleaned_data_local
 )
 
 
@@ -65,18 +66,9 @@ def main():
         f"Final dataset size: {len(dpo_dataset)} rows (Target: {target_samples})"
     )
 
-    output_path = DPO_DATASET_DIR / "dpo_dataset.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    dpo_dataset.to_parquet(output_path, index=False)
+    save_cleaned_data_local(dpo_dataset, DPO_RAW_DATASET_PATH)
 
-    X_train, X_val, X_test = split_dataset(
-        dpo_dataset, random_state=random_state, val_size=val_size, test_size=test_size
-    )
-    X_train.to_parquet(DPO_TRAIN_DATASET_PATH, index=False)
-    X_val.to_parquet(DPO_VAL_DATASET_PATH, index=False)
-    X_test.to_parquet(DPO_TEST_DATASET_PATH, index=False)
-
-    logger.info(f"Successfully saved {len(dpo_dataset)} samples to {output_path}")
+    logger.info(f"Successfully saved {len(dpo_dataset)} samples to {DPO_RAW_DATASET_PATH}")
     logger.info("=" * 60)
 
 

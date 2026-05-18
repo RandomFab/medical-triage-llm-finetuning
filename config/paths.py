@@ -12,12 +12,15 @@ ROOT_MODEL_DIR = PROJECT_ROOT / "models"
 
 # === DPO dataset paths === 
 DPO_DATASET_DIR = PROCESSED_DATA_DIR / "dpo_dataset"
+DPO_RAW_DATASET_PATH = DPO_DATASET_DIR / "dpo_dataset.parquet"
 DPO_TRAIN_DATASET_PATH = DPO_DATASET_DIR / "dpo_train.parquet"
 DPO_VAL_DATASET_PATH = DPO_DATASET_DIR / "dpo_val.parquet"
 DPO_TEST_DATASET_PATH = DPO_DATASET_DIR / "dpo_test.parquet"
 
 # === SFT dataset paths ===
 SFT_DATASET_DIR = PROCESSED_DATA_DIR / "sft_dataset"
+SFT_RAW_DATASET_PATH = SFT_DATASET_DIR / "sft_dataset.parquet"
+SFT_AUGMENTED_DATASET_PATH = SFT_DATASET_DIR / "sft_dataset_augmented.parquet"
 SFT_TRAIN_DATASET_PATH = SFT_DATASET_DIR / "sft_train.parquet"
 SFT_VAL_DATASET_PATH = SFT_DATASET_DIR / "sft_val.parquet"
 SFT_TEST_DATASET_PATH = SFT_DATASET_DIR / "sft_test.parquet"
