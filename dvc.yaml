@@ -95,4 +95,19 @@ stages:
       - dpo.random_state
       - dpo.source_datasets
     outs:
-      - data/processed/dpo_dataset
+      - data/processed/dpo_dataset/dpo_dataset.parquet
+
+  # ── Split train/val/test sur le dataset DPO ────────────────────────────
+  split_dpo:
+    cmd: python -m src.processing.dpo_dataset.split_dpo_dataset
+    deps:
+      - src/processing/dpo_dataset/split_dpo_dataset.py
+      - data/processed/dpo_dataset/dpo_dataset.parquet
+    params:
+      - dpo.random_state
+      - dpo.val_size
+      - dpo.test_size
+    outs:
+      - data/processed/dpo_dataset/dpo_train.parquet
+      - data/processed/dpo_dataset/dpo_val.parquet
+      - data/processed/dpo_dataset/dpo_test.parquet

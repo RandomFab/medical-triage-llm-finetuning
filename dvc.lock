@@ -5,8 +5,8 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
-      size: 1264
+      md5: ae0dc8a885021bd2b63e1bd6d95871c0
+      size: 1472
     - path: src/processing/mediqal_cleaning.py
       hash: md5
       md5: 43243341594d2f22c71e4ae282eec606
@@ -26,8 +26,8 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
-      size: 1264
+      md5: ae0dc8a885021bd2b63e1bd6d95871c0
+      size: 1472
     - path: src/processing/medquad_cleaning.py
       hash: md5
       md5: 819de12a4a2419995dc77c09bee2b0eb
@@ -47,8 +47,8 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
-      size: 1264
+      md5: ae0dc8a885021bd2b63e1bd6d95871c0
+      size: 1472
     - path: src/processing/frenchmedmcqa_cleaning.py
       hash: md5
       md5: 09b661aec17daece71cb5a7ed351c905
@@ -68,8 +68,8 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
-      size: 1264
+      md5: ae0dc8a885021bd2b63e1bd6d95871c0
+      size: 1472
     - path: src/processing/ultramed_cleaning.py
       hash: md5
       md5: f0a360f9577cce29863357d1b420cf92
@@ -89,8 +89,8 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
-      size: 1264
+      md5: ae0dc8a885021bd2b63e1bd6d95871c0
+      size: 1472
     - path: data/processed/frenchmedmcqa_dataset
       hash: md5
       md5: 32df57a04b0d59147b6bbc8a8837a0fe.dir
@@ -139,17 +139,21 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eed3e1d1e9478e90d9d29d5c24330ec1
-      size: 895
+      md5: ae0dc8a885021bd2b63e1bd6d95871c0
+      size: 1472
     - path: data/processed/ultramed_dataset
       hash: md5
-      md5: d6a5b0ab3dc0a4b4ce30ac8d191bf6fc.dir
-      size: 377721304
+      md5: dd78091340b6aef7631dc31cff29b630.dir
+      size: 377721432
       nfiles: 2
     - path: src/processing/dpo_dataset/generate_dpo_dataset.py
       hash: md5
-      md5: 0d79c9f7b80cad31fca2ef3203c7d871
-      size: 2703
+      md5: 9ee87c705327aa0ebdbb84717c463b81
+      size: 2721
+    - path: src/processing/utils_cleaning.py
+      hash: md5
+      md5: 66383d51abc2ce9ea372c9cb544569b5
+      size: 16253
     params:
       params.yaml:
         dpo.random_state: 42
@@ -157,8 +161,89 @@ stages:
         - ultramed_dataset/ultramed_DPO.parquet
         dpo.target_samples: 5000
     outs:
-    - path: data/processed/dpo_dataset
+    - path: data/processed/dpo_dataset/dpo_dataset.parquet
       hash: md5
-      md5: 382c0c3ce9f92875c5faf0f2f4b231c4.dir
-      size: 24215983
-      nfiles: 4
+      md5: 6218f76624f5be10f78795b557529f01
+      size: 12167192
+  triage_augmentation:
+    cmd: python -m src.processing.triage_augmentation
+    deps:
+    - path: data/processed/sft_dataset/sft_dataset.parquet
+      hash: md5
+      md5: d75b1918656f0d9f6e0b12a8d0a206d0
+      size: 5444492
+    - path: src/processing/triage_augmentation.py
+      hash: md5
+      md5: 61001838cb18829283a8dd5d759b5dab
+      size: 9666
+    params:
+      params.yaml:
+        triage_augmentation.max_retries: 2
+        triage_augmentation.model: mistral-small-latest
+    outs:
+    - path: data/processed/sft_dataset/sft_dataset_augmented.parquet
+      hash: md5
+      md5: 4bee67e12cc1c0f0c6ecfbcf2c8910ac
+      size: 6034832
+    - path: data/processed/sft_dataset/sft_triage_failures.parquet
+      hash: md5
+      md5: 1156d020869412e3929ac3b7e408cf2d
+      size: 8819
+  split_sft:
+    cmd: python -m src.processing.sft_dataset.split_sft_dataset
+    deps:
+    - path: data/processed/sft_dataset/sft_dataset_augmented.parquet
+      hash: md5
+      md5: 4bee67e12cc1c0f0c6ecfbcf2c8910ac
+      size: 6034832
+    - path: src/processing/sft_dataset/split_sft_dataset.py
+      hash: md5
+      md5: ba6ad9756d53b40aaca079244c866615
+      size: 1272
+    params:
+      params.yaml:
+        sft.random_state: 42
+        sft.test_size: 0.1
+        sft.val_size: 0.2
+    outs:
+    - path: data/processed/sft_dataset/sft_test.parquet
+      hash: md5
+      md5: 082dd090ed5b1a630adf8f4cfe459e4b
+      size: 636695
+    - path: data/processed/sft_dataset/sft_train.parquet
+      hash: md5
+      md5: a9b6f3d03c03b47c2d4ffbac101c8a14
+      size: 4343857
+    - path: data/processed/sft_dataset/sft_val.parquet
+      hash: md5
+      md5: 2fccf62ae2c3c553cbe62f40b41acbd0
+      size: 1240315
+  split_dpo:
+    cmd: python -m src.processing.dpo_dataset.split_dpo_dataset
+    deps:
+    - path: data/processed/dpo_dataset/dpo_dataset.parquet
+      hash: md5
+      md5: 6218f76624f5be10f78795b557529f01
+      size: 12167192
+    - path: src/processing/dpo_dataset/split_dpo_dataset.py
+      hash: md5
+      md5: e3fc6aea06047dcfae7b032729212ea6
+      size: 1296
+    params:
+      params.yaml:
+        dpo.random_state: 42
+        dpo.test_size: 0.1
+        dpo.val_size: 0.2
+    outs:
+    - path: data/processed/dpo_dataset/dpo_test.parquet
+      hash: md5
+      md5: 481bbebddf8252b9e1d3b10e1c96821a
+      size: 1208959
+    - path: data/processed/dpo_dataset/dpo_train.parquet
+      hash: md5
+      md5: 49e4e71cb2f8fcad6f81a9864c0d459a
+      size: 8582050
+    - path: data/processed/dpo_dataset/dpo_val.parquet
+      hash: md5
+      md5: 88d8b26b848dfd10d6f6638b429cf03e
+      size: 2420159
