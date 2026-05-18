@@ -93,8 +93,9 @@ jobs:
             # Note : le run ID MLflow est fixé au run de merge DPO actuel.
             # Limitation connue : à mettre à jour si un nouveau merge est effectué.
             mkdir -p ~/models
+            # changement du model DPO → SFT
             gsutil -m cp -r \
-              gs://p14-medical-data/mlflow-artifacts/0/f27d13653f474388a04775d75e1426bd/artifacts/merged_model_for_deployment \
+              gs://p14-medical-data/mlflow-artifacts/0/5b0c456679ea41debcd3fed64f6b6bff/artifacts/merged_model_for_deployment \ 
               ~/models/
 
             # 3. Pull la nouvelle image
