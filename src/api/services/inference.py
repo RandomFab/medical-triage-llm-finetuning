@@ -19,6 +19,10 @@ class VLLMEngine:
         
         # Charger le tokenizer et le system prompt pour s'assurer du bon formatage ChatML/Qwen
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.stop_token_ids = [
+            self.tokenizer.convert_tokens_to_ids("<|im_end|>"),
+            self.tokenizer.convert_tokens_to_ids("<|endoftext|>"),
+        ]
         with open(PARAMS_PATH, encoding="utf-8") as f:
             params = yaml.safe_load(f)
         self.system_prompt = params["sft_model"]["system_prompt"]
@@ -41,7 +45,9 @@ class VLLMEngine:
         sampling_params = SamplingParams(
             temperature=temperature,
             max_tokens=max_tokens,
-            top_p=0.95
+            top_p=0.95,
+            stop_token_ids=self.stop_token_ids, # pour s'assurer que la génération s'arrête aux bons tokens de fin
+            repetition_penalty=1.1, # évite les boucle de réponses
         )
         # Nécessite un identifiant unique par requête
         request_id = str(uuid.uuid4())
@@ -52,6 +58,10 @@ class VLLMEngine:
         final_output = None
         async for request_output in results_generator:
             final_output = request_output
+        
+        generated_text = final_output.outputs[0].text
+ 
+        generated_text = generated_text.replace("<|im_end|>", "").strip() # Nettoyage des tokens de fin
             
         # On retourne le texte généré par la première séquence
-        return final_output.outputs[0].text
+        return generated_text
