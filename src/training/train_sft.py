@@ -52,6 +52,13 @@ def tokenize_chat(question: str, answer: str) -> dict:
     input_ids = tokenizer.encode(chat_text, truncation=True, max_length=max_length)
     prompt_ids = tokenizer.encode(prompt_text)
 
+    # Forcer la présence du token de fin de séquence à la fin des input_ids pour éviter les problèmes de génération infinie
+    eos_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    if input_ids[-1] != eos_token_id:
+        input_ids[-1] = eos_token_id
+        logger.debug("EOS token forced at end of truncated sequence")
+
+
     idx = min(len(prompt_ids), len(input_ids))
 
     labels = input_ids.copy()
@@ -126,6 +133,7 @@ def define_model():
         model_name,
         quantization_config=quantization,
         device_map="auto",
+        torch_dtype=torch.float16, # forcer le chargement en fp16 pour éviter les problèmes de mémoire avec les modèles 4-bit (ex: Qwen2.5-7B-4bit)
     )
 
     # ← ajouté : cast des layer norms en fp32, désactivation du KV cache,
