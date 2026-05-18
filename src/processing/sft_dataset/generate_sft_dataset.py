@@ -1,9 +1,21 @@
 import yaml
 
 from config.logger import logger
-from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, SFT_DATASET_DIR,SFT_TEST_DATASET_PATH, SFT_TRAIN_DATASET_PATH, SFT_VAL_DATASET_PATH
+from config.paths import (
+    PROCESSED_DATA_DIR,
+    PROJECT_ROOT,
+    SFT_DATASET_DIR,
+    SFT_TEST_DATASET_PATH,
+    SFT_TRAIN_DATASET_PATH,
+    SFT_VAL_DATASET_PATH,
+)
 from src.processing.anonymisation import anonymize_text
-from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples, split_dataset
+from src.processing.utils_cleaning import (
+    add_token_counts,
+    collect_balanced_samples,
+    split_dataset,
+)
+
 
 def main():
     """
@@ -28,7 +40,9 @@ def main():
 
     logger.info("=" * 60)
     logger.info("Starting SFT dataset generation process")
-    logger.info(f"Target: {target_samples} balanced samples from {len(parquet_files)} datasets")
+    logger.info(
+        f"Target: {target_samples} balanced samples from {len(parquet_files)} datasets"
+    )
     logger.info("=" * 60)
 
     sft_dataset = collect_balanced_samples(
@@ -38,31 +52,31 @@ def main():
         random_state=random_state,
     )
 
-    columns_to_anonymize = ["question", "answer"]
-    for col in columns_to_anonymize:
-        sft_dataset[col] = sft_dataset[col].map(anonymize_text)
+    # Retrait du traitement presidio car les noms des maladies sont identifiés comme des entités à anonymiser, ce qui pose problème pour la qualité du dataset DPO (ex: "Diabète de type 2" devient "Diabète de type [PERSON]") et rend les questions/réponses incohérentes.
+    # columns_to_anonymize = ["question", "answer"]
+    # for col in columns_to_anonymize:
+    #     sft_dataset[col] = sft_dataset[col].map(anonymize_text)
 
     sft_dataset = add_token_counts(sft_dataset, columns=["question", "answer"])
 
     logger.info("=" * 60)
-    logger.info(f"Final dataset size: {len(sft_dataset)} rows (Target: {target_samples})")
+    logger.info(
+        f"Final dataset size: {len(sft_dataset)} rows (Target: {target_samples})"
+    )
 
     output_path = SFT_DATASET_DIR / "sft_dataset.parquet"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sft_dataset.to_parquet(output_path, index=False)
-    X_train, X_val, X_test= split_dataset(
-        sft_dataset, 
-        random_state=random_state, 
-        val_size=val_size, 
-        test_size=test_size
-        )
+    X_train, X_val, X_test = split_dataset(
+        sft_dataset, random_state=random_state, val_size=val_size, test_size=test_size
+    )
     X_train.to_parquet(SFT_TRAIN_DATASET_PATH, index=False)
     X_val.to_parquet(SFT_VAL_DATASET_PATH, index=False)
     X_test.to_parquet(SFT_TEST_DATASET_PATH, index=False)
 
-
     logger.info(f"Successfully saved {len(sft_dataset)} samples to {output_path}")
     logger.info("=" * 60)
-    
+
+
 if __name__ == "__main__":
     main()
