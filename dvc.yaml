@@ -35,10 +35,12 @@ stages:
     outs:
       - data/processed/ultramed_dataset
 
+  # ── Filtre clinique + sampling 5000 (sans Presidio, sans split) ────────────
   generate_sft:
     cmd: python -m src.processing.sft_dataset.generate_sft_dataset
     deps:
       - src/processing/sft_dataset/generate_sft_dataset.py
+      - src/processing/utils_cleaning.py
       - config/paths.py
       - data/processed/mediqal_dataset
       - data/processed/medquad_dataset
@@ -48,13 +50,44 @@ stages:
       - sft.target_samples
       - sft.random_state
       - sft.source_datasets
+      - sft.min_question_tokens
     outs:
-      - data/processed/sft_dataset
+      - data/processed/sft_dataset/sft_dataset.parquet
+
+  # ── Reformatage triage Mistral (toutes les 5000 lignes) ────────────────────
+  triage_augmentation:
+    cmd: python -m src.processing.triage_augmentation
+    deps:
+      - src/processing/triage_augmentation.py
+      - data/processed/sft_dataset/sft_dataset.parquet
+    params:
+      - triage_augmentation.max_retries
+      - triage_augmentation.model
+    outs:
+      - data/processed/sft_dataset/sft_dataset_augmented.parquet
+      - data/processed/sft_dataset/sft_triage_failures.parquet:
+          persist: true    # pas recréé si déjà existant (fichier d'audit)
+
+  # ── Split train/val/test sur le dataset reformaté ──────────────────────────
+  split_sft:
+    cmd: python -m src.processing.sft_dataset.split_sft_dataset
+    deps:
+      - src/processing/sft_dataset/split_sft_dataset.py
+      - data/processed/sft_dataset/sft_dataset_augmented.parquet
+    params:
+      - sft.random_state
+      - sft.val_size
+      - sft.test_size
+    outs:
+      - data/processed/sft_dataset/sft_train.parquet
+      - data/processed/sft_dataset/sft_val.parquet
+      - data/processed/sft_dataset/sft_test.parquet
 
   generate_dpo:
     cmd: python -m src.processing.dpo_dataset.generate_dpo_dataset
     deps:
       - src/processing/dpo_dataset/generate_dpo_dataset.py
+      - src/processing/utils_cleaning.py
       - config/paths.py
       - data/processed/ultramed_dataset
     params:
