@@ -29,7 +29,7 @@ def main():
       - dpo_val.parquet      : validation split
       - dpo_test.parquet     : test split
     """
-    with (PROJECT_ROOT / "params.yaml").open() as f:
+    with (PROJECT_ROOT / "params.yaml").open(encoding="utf-8") as f:
         params = yaml.safe_load(f)["dpo"]
 
     target_samples: int = params["target_samples"]

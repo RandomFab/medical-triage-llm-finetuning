@@ -5,118 +5,123 @@ stages:
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eed3e1d1e9478e90d9d29d5c24330ec1
-      size: 895
+      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
+      size: 1264
     - path: src/processing/mediqal_cleaning.py
       hash: md5
-      md5: 19fa851ce222503d87fbf88541debbcd
-      size: 6617
+      md5: 43243341594d2f22c71e4ae282eec606
+      size: 6616
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: b8d8b8113a07c8f0a4b8b39978f204a6
-      size: 13069
+      md5: 66383d51abc2ce9ea372c9cb544569b5
+      size: 16253
     outs:
     - path: data/processed/mediqal_dataset
       hash: md5
-      md5: 84f3344b896a09e5adfa1feac6af30c1.dir
-      size: 3863560
+      md5: dd1a4a3fbc38725afa2066a9e10d15fd.dir
+      size: 3863620
       nfiles: 1
   clean_medquad:
     cmd: python -m src.processing.medquad_cleaning
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eed3e1d1e9478e90d9d29d5c24330ec1
-      size: 895
+      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
+      size: 1264
     - path: src/processing/medquad_cleaning.py
       hash: md5
-      md5: db9464c9cebe0ecbb858c09571cce02e
-      size: 2340
+      md5: 819de12a4a2419995dc77c09bee2b0eb
+      size: 2259
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: b8d8b8113a07c8f0a4b8b39978f204a6
-      size: 13069
+      md5: 66383d51abc2ce9ea372c9cb544569b5
+      size: 16253
     outs:
     - path: data/processed/medquad_dataset
       hash: md5
-      md5: e1ebe8f289fc5df1520ef69501174f2d.dir
-      size: 8531828
+      md5: 42b83e6bf80cdd04285dc1bda8bb8b15.dir
+      size: 8531884
       nfiles: 1
   clean_frenchmedmcqa:
     cmd: python -m src.processing.frenchmedmcqa_cleaning
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eed3e1d1e9478e90d9d29d5c24330ec1
-      size: 895
+      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
+      size: 1264
     - path: src/processing/frenchmedmcqa_cleaning.py
       hash: md5
-      md5: 54be6599dfdb5d18b5b84bf7a78c0dcd
-      size: 3621
+      md5: 09b661aec17daece71cb5a7ed351c905
+      size: 3620
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: b8d8b8113a07c8f0a4b8b39978f204a6
-      size: 13069
+      md5: 66383d51abc2ce9ea372c9cb544569b5
+      size: 16253
     outs:
     - path: data/processed/frenchmedmcqa_dataset
       hash: md5
-      md5: 07902a0b00403187408c12be89eda09d.dir
-      size: 82510
+      md5: 32df57a04b0d59147b6bbc8a8837a0fe.dir
+      size: 82566
       nfiles: 1
   clean_ultramed:
     cmd: python -m src.processing.ultramed_cleaning
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eed3e1d1e9478e90d9d29d5c24330ec1
-      size: 895
+      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
+      size: 1264
     - path: src/processing/ultramed_cleaning.py
       hash: md5
-      md5: 398a8d1c57f089028b1f6e8f73ee9d72
-      size: 6097
+      md5: f0a360f9577cce29863357d1b420cf92
+      size: 5996
     - path: src/processing/utils_cleaning.py
       hash: md5
-      md5: b8d8b8113a07c8f0a4b8b39978f204a6
-      size: 13069
+      md5: 66383d51abc2ce9ea372c9cb544569b5
+      size: 16253
     outs:
     - path: data/processed/ultramed_dataset
       hash: md5
-      md5: d6a5b0ab3dc0a4b4ce30ac8d191bf6fc.dir
-      size: 377721304
+      md5: dd78091340b6aef7631dc31cff29b630.dir
+      size: 377721432
       nfiles: 2
   generate_sft:
     cmd: python -m src.processing.sft_dataset.generate_sft_dataset
     deps:
     - path: config/paths.py
       hash: md5
-      md5: eed3e1d1e9478e90d9d29d5c24330ec1
-      size: 895
+      md5: eb0ced629c8eb6a4fe1bf04d5a76a896
+      size: 1264
     - path: data/processed/frenchmedmcqa_dataset
       hash: md5
-      md5: 07902a0b00403187408c12be89eda09d.dir
-      size: 82510
+      md5: 32df57a04b0d59147b6bbc8a8837a0fe.dir
+      size: 82566
       nfiles: 1
     - path: data/processed/mediqal_dataset
       hash: md5
-      md5: 84f3344b896a09e5adfa1feac6af30c1.dir
-      size: 3863560
+      md5: dd1a4a3fbc38725afa2066a9e10d15fd.dir
+      size: 3863620
       nfiles: 1
     - path: data/processed/medquad_dataset
       hash: md5
-      md5: e1ebe8f289fc5df1520ef69501174f2d.dir
-      size: 8531828
+      md5: 42b83e6bf80cdd04285dc1bda8bb8b15.dir
+      size: 8531884
       nfiles: 1
     - path: data/processed/ultramed_dataset
       hash: md5
-      md5: d6a5b0ab3dc0a4b4ce30ac8d191bf6fc.dir
-      size: 377721304
+      md5: dd78091340b6aef7631dc31cff29b630.dir
+      size: 377721432
       nfiles: 2
     - path: src/processing/sft_dataset/generate_sft_dataset.py
       hash: md5
-      md5: dc88a17d625b9399253515802fb40933
-      size: 2684
+      md5: fe159c77a4a418fd2307a3b2f8320896
+      size: 4821
+    - path: src/processing/utils_cleaning.py
+      hash: md5
+      md5: 66383d51abc2ce9ea372c9cb544569b5
+      size: 16253
     params:
       params.yaml:
+        sft.min_question_tokens: 15
         sft.random_state: 42
         sft.source_datasets:
         - mediqal_dataset/mediqal.parquet
@@ -125,11 +130,10 @@ stages:
         - ultramed_dataset/ultramed_SFT.parquet
         sft.target_samples: 5000
     outs:
-    - path: data/processed/sft_dataset
+    - path: data/processed/sft_dataset/sft_dataset.parquet
       hash: md5
-      md5: 1ec0a0ec3b4212ee9d07eae77abc17ad.dir
-      size: 6617096
-      nfiles: 4
+      md5: d75b1918656f0d9f6e0b12a8d0a206d0
+      size: 5444492
   generate_dpo:
     cmd: python -m src.processing.dpo_dataset.generate_dpo_dataset
     deps:

@@ -88,7 +88,7 @@ def collect_clinical_samples(
 
 
 def main():
-    with (PROJECT_ROOT / "params.yaml").open() as f:
+    with (PROJECT_ROOT / "params.yaml").open(encoding="utf-8") as f:
         params = yaml.safe_load(f)["sft"]
 
     target_samples: int = params["target_samples"]

@@ -39,7 +39,7 @@ SFT_FAILURES_PATH = SFT_DATASET_DIR / "sft_triage_failures.parquet"
 # ── Paramètres ────────────────────────────────────────────────────────────────
 @lru_cache(maxsize=1)
 def _load_params() -> dict:
-    with (PROJECT_ROOT / "params.yaml").open() as f:
+    with (PROJECT_ROOT / "params.yaml").open(encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -151,7 +151,7 @@ Reformate cette réponse au format triage standardisé du CHSA."""
 
 # ── Pipeline principal ────────────────────────────────────────────────────────
 def main():
-    from mistralai import Mistral
+    from mistralai.client import Mistral
 
     params = _get_triage_params()
     model = params.get("model", "mistral-small-latest")
