@@ -3,6 +3,7 @@ sft:
   random_state: 42
   val_size: 0.2
   test_size: 0.1
+  min_question_tokens: 15 
   source_datasets:
     - mediqal_dataset/mediqal.parquet
     - frenchmedmcqa_dataset/frenchmedmcqa.parquet
@@ -15,6 +16,11 @@ dpo:
   test_size: 0.1
   source_datasets:
     - ultramed_dataset/ultramed_DPO.parquet
+
+triage_augmentation:
+  max_retries: 2                    # tentatives par exemple si format invalide
+  model: "mistral-small-latest"     # modèle Mistral (gratuit dans le free tier)
+  batch_log_interval: 100           # log de progression tous les N exemples
 
 
 lora_config:
@@ -87,7 +93,7 @@ training_arguments:
     logging_steps: 10
     load_best_model_at_end: True
     bf16: False
-    fp16: False
+    fp16: True
     gradient_checkpointing: True
     gradient_checkpointing_kwargs:
       use_reentrant: False

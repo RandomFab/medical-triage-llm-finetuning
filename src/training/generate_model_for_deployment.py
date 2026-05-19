@@ -4,11 +4,12 @@ import mlflow
 from transformers import AutoModelForCausalLM
 
 from config.logger import logger
-from config.paths import LOCAL_MERGED_MODEL_PATH
+from config.paths import LOCAL_MERGED_DPO_MODEL_PATH,LOCAL_MERGED_SFT_MODEL_PATH
 from src.training.utils_training import (
     _get_model_name,
     _get_qwen_tokenizer,
-    _load_dpo_lora_adapter,  # ← DPO, pas SFT
+    _load_sft_lora_adapter,
+    _load_dpo_lora_adapter,
 )
 
 mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
@@ -54,7 +55,7 @@ def merge_base_model_with_lora_adapter(base_model, lora_adapter_path: str):
     return model
 
 
-def save_model_for_deployment(model, output_path):
+def save_models_for_deployment(model, output_path):
     """Sauvegarde le modèle mergé localement avant push vers GCS."""
     logger.info(f"Sauvegarde du modèle fusionné vers {output_path}...")
     model.save_pretrained(output_path)
@@ -63,39 +64,68 @@ def save_model_for_deployment(model, output_path):
 
 def main():
     logger.info("=" * 60)
-    logger.info("Génération du modèle DPO mergé pour le déploiement")
+    logger.info("Génération des modèles SFT et DPO mergés pour le déploiement")
     logger.info("=" * 60)
 
-    # 1. Chargement du modèle de base (float32, CPU)
+    # 1. Chargement du modèle de base (float32, CPU) - partagé
+    base_model = load_base_model()
+    tokenizer = _get_qwen_tokenizer()
+
+    # Chemins locaux de sauvegarde
+    sft_output_path = LOCAL_MERGED_SFT_MODEL_PATH
+    dpo_output_path = LOCAL_MERGED_DPO_MODEL_PATH
+
+    # ==========================
+    # TRAITEMENT DU MODELE SFT
+    # ==========================
+    logger.info("--- Début du traitement SFT ---")
+    sft_adapter_path = _load_sft_lora_adapter()
+    sft_merged_model = merge_base_model_with_lora_adapter(base_model, sft_adapter_path)
+    
+    save_models_for_deployment(sft_merged_model, sft_output_path)
+    tokenizer.save_pretrained(sft_output_path)
+    
+    logger.info("Push du modèle SFT mergé vers GCS via MLflow...")
+    with mlflow.start_run(
+        run_name="merge_sft_model_for_deployment",
+        tags={"stage": "deployment", "source": "sft"},
+    ):
+        mlflow.log_artifacts(
+            str(sft_output_path),
+            artifact_path="merged_model_sft_for_deployment",
+        )
+
+    # Libération de la mémoire
+    import gc
+    del sft_merged_model
+    gc.collect()
+
+    # ==========================
+    # TRAITEMENT DU MODELE DPO
+    # ==========================
+    logger.info("--- Début du traitement DPO ---")
+    # On recharge le modèle de base, car un merge est irréversible en mémoire sur l'objet Pytorch. 
+    # Pour faire propre, recharger une nouvelle instance clean (évite les chevauchements)
     base_model = load_base_model()
 
-    # 2. Récupération des adaptateurs DPO depuis MLflow/GCS
-    lora_adapter_path = _load_dpo_lora_adapter()
-
-    # 3. Merge LoRA → modèle monolithique
-    merged_model = merge_base_model_with_lora_adapter(base_model, lora_adapter_path)
-
-    # 4. Sauvegarde locale
-    save_model_for_deployment(merged_model, LOCAL_MERGED_MODEL_PATH)
-
-    # 5. Tokenizer (toujours celui de Qwen3-1.7B-Base, inchangé par le fine-tuning)
-    logger.info("Sauvegarde du tokenizer...")
-    tokenizer = _get_qwen_tokenizer()
-    tokenizer.save_pretrained(LOCAL_MERGED_MODEL_PATH)
-    logger.info("Tokenizer sauvegardé.")
-
-    # 6. Push vers GCS via MLflow
-    logger.info("Push du modèle mergé vers GCS via MLflow...")
+    dpo_adapter_path = _load_dpo_lora_adapter()
+    dpo_merged_model = merge_base_model_with_lora_adapter(base_model, dpo_adapter_path)
+    
+    save_models_for_deployment(dpo_merged_model, dpo_output_path)
+    tokenizer.save_pretrained(dpo_output_path)
+    
+    logger.info("Push du modèle DPO mergé vers GCS via MLflow...")
     with mlflow.start_run(
         run_name="merge_dpo_model_for_deployment",
         tags={"stage": "deployment", "source": "dpo"},
     ):
         mlflow.log_artifacts(
-            str(LOCAL_MERGED_MODEL_PATH),
-            artifact_path="merged_model_for_deployment",
+            str(dpo_output_path),
+            artifact_path="merged_model_dpo_for_deployment",
         )
+
     logger.info("=" * 60)
-    logger.info("✅ Modèle DPO mergé et pushé sur GCS avec succès.")
+    logger.info("✅ Modèles SFT et DPO mergés et pushés sur GCS avec succès.")
     logger.info("=" * 60)
 
 

@@ -1,9 +1,22 @@
 import yaml
 
 from config.logger import logger
-from config.paths import PROCESSED_DATA_DIR, PROJECT_ROOT, DPO_DATASET_DIR, DPO_TEST_DATASET_PATH, DPO_TRAIN_DATASET_PATH, DPO_VAL_DATASET_PATH
+from config.paths import (
+    PROCESSED_DATA_DIR,
+    PROJECT_ROOT,
+    DPO_RAW_DATASET_PATH,
+    DPO_TEST_DATASET_PATH,
+    DPO_TRAIN_DATASET_PATH,
+    DPO_VAL_DATASET_PATH,
+)
 from src.processing.anonymisation import anonymize_text
-from src.processing.utils_cleaning import add_token_counts, collect_balanced_samples, split_dataset
+from src.processing.utils_cleaning import (
+    add_token_counts,
+    collect_balanced_samples,
+    split_dataset,
+    save_cleaned_data_local
+)
+
 
 def main():
     """
@@ -17,7 +30,7 @@ def main():
       - dpo_val.parquet      : validation split
       - dpo_test.parquet     : test split
     """
-    with (PROJECT_ROOT / "params.yaml").open() as f:
+    with (PROJECT_ROOT / "params.yaml").open(encoding="utf-8") as f:
         params = yaml.safe_load(f)["dpo"]
 
     target_samples: int = params["target_samples"]
@@ -28,7 +41,9 @@ def main():
 
     logger.info("=" * 60)
     logger.info("Starting DPO dataset generation process")
-    logger.info(f"Target: {target_samples} balanced samples from {len(parquet_files)} datasets")
+    logger.info(
+        f"Target: {target_samples} balanced samples from {len(parquet_files)} datasets"
+    )
     logger.info("=" * 60)
 
     dpo_dataset = collect_balanced_samples(
@@ -37,32 +52,25 @@ def main():
         target_samples=target_samples,
         random_state=random_state,
     )
+    # Retrait du traitement presidio car les noms des maladies sont identifiés comme des entités à anonymiser, ce qui pose problème pour la qualité du dataset DPO (ex: "Diabète de type 2" devient "Diabète de type [PERSON]") et rend les questions/réponses incohérentes.
+    # columns_to_anonymize = ["question", "chosen", "rejected"]
+    # for col in columns_to_anonymize:
+    #     dpo_dataset[col] = dpo_dataset[col].map(anonymize_text)
 
-    columns_to_anonymize = ["question", "chosen", "rejected"]
-    for col in columns_to_anonymize:
-        dpo_dataset[col] = dpo_dataset[col].map(anonymize_text)
-
-    dpo_dataset = add_token_counts(dpo_dataset, columns=["question", "chosen", "rejected"])
+    dpo_dataset = add_token_counts(
+        dpo_dataset, columns=["question", "chosen", "rejected"]
+    )
 
     logger.info("=" * 60)
-    logger.info(f"Final dataset size: {len(dpo_dataset)} rows (Target: {target_samples})")
+    logger.info(
+        f"Final dataset size: {len(dpo_dataset)} rows (Target: {target_samples})"
+    )
 
-    output_path = DPO_DATASET_DIR / "dpo_dataset.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    dpo_dataset.to_parquet(output_path, index=False)
+    save_cleaned_data_local(dpo_dataset, DPO_RAW_DATASET_PATH)
 
-    X_train, X_val, X_test= split_dataset(
-        dpo_dataset,
-        random_state=random_state, 
-        val_size=val_size, 
-        test_size=test_size
-        )
-    X_train.to_parquet(DPO_TRAIN_DATASET_PATH, index=False)
-    X_val.to_parquet(DPO_VAL_DATASET_PATH, index=False)
-    X_test.to_parquet(DPO_TEST_DATASET_PATH, index=False)
-
-    logger.info(f"Successfully saved {len(dpo_dataset)} samples to {output_path}")
+    logger.info(f"Successfully saved {len(dpo_dataset)} samples to {DPO_RAW_DATASET_PATH}")
     logger.info("=" * 60)
+
 
 if __name__ == "__main__":
     main()

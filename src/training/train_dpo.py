@@ -52,10 +52,16 @@ def define_model() -> PeftModel:
     )
 
     sft_model = _load_sft_lora_adapter()
-    model = PeftModel.from_pretrained(model_4bit, sft_model, device_map="auto", is_trainable=True,autocast_adapter_dtype=False)
-
+    model = PeftModel.from_pretrained(
+        model_4bit,
+        sft_model,
+        device_map="auto",
+        is_trainable=True,
+        autocast_adapter_dtype=False,
+    )
+    model = model.to(torch.float16) 
+    
     return model
-
 
 
 def prepare_dpo_dataset(dataset: pd.DataFrame) -> Dataset:
@@ -78,7 +84,7 @@ def train_dpo_model(
     training_args: DPOConfig,
     tokenizer: PreTrainedTokenizerBase,
 ) -> DPOTrainer:
-    
+
     trainer = DPOTrainer(
         model=model,
         args=training_args,  # DPOConfig
@@ -143,6 +149,7 @@ def main():
         )
 
         logger.info("DPO training completed successfully")
+
 
 if __name__ == "__main__":
     main()
