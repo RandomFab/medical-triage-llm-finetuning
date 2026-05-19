@@ -5,15 +5,10 @@ from config.paths import (
     PROCESSED_DATA_DIR,
     PROJECT_ROOT,
     DPO_RAW_DATASET_PATH,
-    DPO_TEST_DATASET_PATH,
-    DPO_TRAIN_DATASET_PATH,
-    DPO_VAL_DATASET_PATH,
 )
-from src.processing.anonymisation import anonymize_text
 from src.processing.utils_cleaning import (
     add_token_counts,
     collect_balanced_samples,
-    split_dataset,
     save_cleaned_data_local
 )
 
@@ -36,8 +31,8 @@ def main():
     target_samples: int = params["target_samples"]
     random_state: int = params["random_state"]
     parquet_files: list[str] = params["source_datasets"]
-    val_size: float = params.get("val_size", 0.2)
-    test_size: float = params.get("test_size", 0.1)
+    # val_size: float = params.get("val_size", 0.2)
+    # test_size: float = params.get("test_size", 0.1)
 
     logger.info("=" * 60)
     logger.info("Starting DPO dataset generation process")
