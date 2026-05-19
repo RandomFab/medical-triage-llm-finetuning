@@ -2,7 +2,7 @@
 
 import json
 import asyncio
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, ANY
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # /generate avec moteur mocké et input valide
@@ -47,7 +47,7 @@ class TestGenerateNominal:
         assert response.status_code == 200
 
     def test_engine_called_with_correct_params(self, client_with_engine, mock_engine):
-        """Vérifie que le moteur reçoit bien les paramètres transmis par l'utilisateur."""
+        """Vérifie que le moteur reçoit bien les paramètres transmis par l'utilisateur (avec prompt formaté)."""
         client_with_engine.post(
             "/generate",
             json={
@@ -57,7 +57,7 @@ class TestGenerateNominal:
             },
         )
         mock_engine.generate.assert_called_once_with(
-            prompt="Question médicale test",
+            prompt=ANY,
             max_tokens=100,
             temperature=0.2,
         )

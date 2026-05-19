@@ -344,3 +344,83 @@ def split_dataset(df: pd.DataFrame, random_state: int = 42, val_size: float = 0.
     logger.info(f"Train set: {len(X_train)} rows | Validation set: {len(X_val)} rows | Test set: {len(X_test)} rows | Total: {len(X_train) + len(X_val) + len(X_test)} rows")
     return X_train, X_val, X_test
 
+# === Clinical filtering helper functions ===
+
+CLINICAL_KEYWORDS_FR = [
+    # Symptômes
+    "douleur", "fièvre", "toux", "essoufflement", "dyspnée", "nausée",
+    "vomissement", "vertiges", "céphalée", "malaise", "fatigue", "palpitation",
+    "saignement", "hémorragie", "convulsion", "syncope", "diarrhée",
+    "constipation", "œdème", "prurit", "brûlure", "crampe",
+    # Temporalité clinique
+    "depuis", "brutal", "progressif", "soudain", "chronique", "aigü",
+    # Contexte patient
+    "patient", "patiente", "homme", "femme", "enfant", "nourrisson",
+    "ans", "antécédent", "antécédents", "traitement", "allergie",
+    "constante", "tension", "pouls", "saturation", "température",
+    "consultation", "hospitalisé", "admis", "urgence",
+]
+ 
+CLINICAL_KEYWORDS_EN = [
+    # Symptoms
+    "pain", "fever", "cough", "shortness of breath", "nausea", "vomiting",
+    "dizziness", "headache", "fatigue", "palpitation", "bleeding", "seizure",
+    "diarrhea", "swelling", "rash", "numbness", "weakness",
+    # Temporality
+    "sudden", "progressive", "chronic", "acute", "weeks", "days", "hours",
+    "worsening", "onset",
+    # Patient context
+    "patient", "year-old", "years old", "male", "female", "child", "infant",
+    "history of", "presents with", "complains of", "admitted", "emergency",
+    "vital signs", "blood pressure", "pulse", "saturation", "temperature",
+]
+ 
+CLINICAL_KEYWORDS = CLINICAL_KEYWORDS_FR + CLINICAL_KEYWORDS_EN
+ 
+ 
+def filter_clinical_questions(
+    df: pd.DataFrame,
+    min_question_tokens: int = 15,
+) -> pd.DataFrame:
+    """
+    Filtre un DataFrame pour ne garder que les questions cliniquement
+    pertinentes (symptômes, contexte patient, temporalité).
+ 
+    Critères de rétention :
+      1. La question contient au moins un mot-clé clinique.
+      2. La question fait au moins `min_question_tokens` tokens
+         (filtre les QCM d'une ligne sans contexte : "Quel est le rôle de X ?")
+ 
+    Args:
+        df: DataFrame avec au minimum une colonne 'question'.
+            Si 'token_count_question' existe, elle est utilisée pour le filtre
+            de longueur. Sinon, on utilise un proxy par mots (split).
+        min_question_tokens: seuil de longueur minimal (en tokens ou mots).
+ 
+    Returns:
+        DataFrame filtré (copie — ne modifie pas l'original).
+    """
+    n_before = len(df)
+ 
+    # Critère 1 : mots-clés cliniques
+    q_lower = df["question"].str.lower()
+    clinical_mask = q_lower.apply(
+        lambda q: any(kw in q for kw in CLINICAL_KEYWORDS)
+    )
+ 
+    # Critère 2 : longueur minimale
+    if "token_count_question" in df.columns:
+        length_mask = df["token_count_question"] >= min_question_tokens
+    else:
+        # Proxy par comptage de mots si les token counts ne sont pas encore calculés
+        length_mask = df["question"].str.split().str.len() >= min_question_tokens
+ 
+    filtered = df[clinical_mask & length_mask].copy()
+ 
+    n_after = len(filtered)
+    logger.info(
+        f"Clinical filter: {n_before} → {n_after} "
+        f"({n_before - n_after} removed, {n_after/n_before*100:.1f}% retained)"
+    )
+ 
+    return filtered
