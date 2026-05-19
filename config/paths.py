@@ -30,4 +30,6 @@ RAW_DATA_GCS_URL = os.environ.get("RAW_DATA_GCS_URL", "gs://p14-medical-data/raw
 
 GCS_MODEL_PATH = os.environ.get("GCS_MODEL_PATH", "gs://p14-medical-data/mlflow-artifacts")
 LOCAL_MERGED_MODEL_PATH = ROOT_MODEL_DIR / "merged_model_for_deployment"
+LOCAL_MERGED_SFT_MODEL_PATH = LOCAL_MERGED_MODEL_PATH / "merged_model_sft"
+LOCAL_MERGED_DPO_MODEL_PATH = LOCAL_MERGED_MODEL_PATH / "merged_model_dpo"
 GCS_MERGED_MODEL_PATH = os.environ.get("GCS_MERGED_MODEL_PATH", "gs://p14-medical-data/merged-model-for-deployment")
