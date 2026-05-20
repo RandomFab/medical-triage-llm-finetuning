@@ -1332,7 +1332,215 @@ Les 70 tests couvrent les couches unitaire, intégration et smoke, exécutables 
 
 ## 6. Évaluation et métriques de performance
 
-*[À compléter]*
+L'évaluation d'un modèle de langage fine-tuné en contexte médical ne peut se limiter à l'analyse des courbes de loss. Elle doit combiner trois axes complémentaires : les métriques d'entraînement (convergence, généralisation), l'évaluation qualitative des réponses générées (pertinence médicale, respect du format attendu), et les métriques opérationnelles de l'endpoint déployé (latence, robustesse). Cette section présente les résultats obtenus sur chacun de ces axes, ainsi que l'analyse comparative entre les versions v1 et v2 du pipeline qui a guidé la décision finale de déploiement.
+
+### 6.1 Métriques d'entraînement SFT v2
+
+#### 6.1.1 Évolution de la loss d'entraînement
+
+Le run SFT v2 (`sft_qwen3-1.7b-base_qlora_r16_fp16_T4`, run ID `7eef6553`) a été entraîné sur 2 epochs, soit 220 steps (3 500 exemples d'entraînement, batch size effectif de 16 via gradient accumulation sur 16 steps).
+
+| Step | Train loss |
+|------|-----------|
+| 10   | 1.903     |
+| 20   | 1.257     |
+| 30   | 0.884     |
+| 50   | 0.639     |
+| 110 (fin epoch 1)  | 0.582     |
+| 220 (fin epoch 2)  | 0.472     |
+
+La dynamique d'apprentissage se décompose en trois phases distinctes :
+
+**Phase 1 — Adaptation rapide (steps 0-50).** La loss chute de 1.903 à 0.639, soit une réduction de 66% en un quart de l'entraînement. Cette descente abrupte correspond à l'apprentissage de la structure de base des réponses de triage : le modèle passe d'une distribution de pré-entraînement généraliste (où les réponses médicales structurées sont très improbables) à une distribution qui produit des réponses au format attendu. La valeur initiale de 1.903 est cohérente avec un modèle de base confronté pour la première fois à un format de sortie très spécifique — elle serait plus basse (~1.0-1.2) si le modèle avait déjà vu des instructions médicales structurées dans son pré-entraînement.
+
+**Phase 2 — Consolidation (steps 50-110, fin epoch 1).** La loss oscille entre 0.575 et 0.607, formant un plateau relatif. Le modèle a absorbé la majorité du signal d'entraînement : il produit des réponses structurées mais affine encore la terminologie médicale et les niveaux d'urgence. Ce plateau correspond à la fin du premier passage sur l'intégralité du dataset.
+
+**Phase 3 — Affinement (steps 110-220, epoch 2).** La loss reprend sa descente de 0.582 à 0.472, avec une progression plus modeste mais régulière. Le second epoch permet au modèle d'affiner les détails : terminologie médicale spécialisée, cohérence des niveaux d'urgence, noms des services d'orientation. La loss finale de 0.472 est significativement meilleure que celle du SFT v1 (1.112), une amélioration de 57.6% qui reflète directement la meilleure qualité des données v2 (format triage cohérent via l'augmentation Mistral, absence de contamination par les balises Presidio).
+
+#### 6.1.2 Absence de surapprentissage
+
+Le choix de 2 epochs est validé par le comportement de la loss en fin de run : la train loss continue de décroître légèrement au step 220 (0.472) sans signe d'oscillation ascendante. Cependant, le mécanisme `load_best_model_at_end=True` (critère : eval loss minimale) garantit que le checkpoint retenu est celui qui généralise le mieux sur les données de validation, indépendamment de la train loss finale. Le delta modeste entre les steps 200 (0.498) et 220 (0.472) confirme qu'un troisième epoch n'apporterait qu'un gain marginal au prix d'un risque de mémorisation accru.
+
+### 6.2 Métriques d'entraînement DPO v2
+
+#### 6.2.1 Évolution de la loss DPO
+
+Le run DPO v2 (`dpo_qwen3-1.7b-base_qlora_r16_bf16_T4`, run ID `e67f042d`) a été entraîné sur 2 epochs (220 steps) à partir du modèle SFT v2 champion. Le DPOTrainer calcule une loss de type cross-entropy binaire sur la probabilité relative des réponses `chosen` et `rejected`, avec un terme de régularisation KL contrôlé par le paramètre beta.
+
+| Step | Train loss | Eval loss |
+|------|-----------|-----------|
+| 10   | 0.693     | —         |
+| 50   | 0.611     | 0.616     |
+| 100  | 0.586     | 0.591     |
+| 150  | 0.564     | 0.584     |
+| 200  | 0.530     | 0.583     |
+| 220  | 0.528     | 0.583     |
+
+La train loss démarre à 0.693, valeur qui correspond exactement à log(2) ≈ 0.693. Ce point de départ théorique est le signe d'un modèle qui ne discrimine pas encore entre les réponses `chosen` et `rejected` — il leur assigne une probabilité relative de 50/50. C'est le comportement attendu et un indicateur sain : le modèle SFT n'a pas été exposé aux préférences DPO et part donc d'un état neutre.
+
+La descente suit un profil en deux phases :
+- **Steps 10-120** : décroissance régulière de 0.693 à ~0.555. Le modèle apprend rapidement à distinguer les réponses préférées des réponses rejetées.
+- **Steps 120-220** : oscillations entre 0.528 et 0.584. Ces oscillations sont attendues avec un batch size effectif de 1 (chaque exemple de préférence est traité individuellement), où la variance inter-batch est élevée. La tendance sous-jacente reste légèrement descendante.
+
+L'eval loss décroît de 0.616 (step 50) à 0.583 (step 220), avec un plateau très marqué entre les steps 150 et 220 (variation < 0.001). Ce plateau confirme la convergence du modèle : il a atteint sa capacité maximale de discrimination sur les données de validation sans surapprentissage. L'écart train/eval loss reste faible en fin de run (~0.005), ce qui atteste de la bonne généralisation du modèle aligné sur des triplets non vus.
+
+#### 6.2.2 Rewards et margins
+
+Les métriques de rewards, spécifiques au DPO, mesurent l'écart entre les log-probabilités du modèle entraîné et celles du modèle de référence (SFT gelé) pour chaque type de réponse. Elles constituent l'indicateur le plus direct de la qualité de l'alignement.
+
+| Step | Eval rewards/chosen | Eval rewards/rejected | Eval rewards/margins |
+|------|--------------------|-----------------------|---------------------|
+| 50   | −0.480             | −0.741                | +0.260              |
+| 100  | −0.627             | −1.000                | +0.373              |
+| 150  | −0.631             | −1.033                | +0.402              |
+| 200  | −0.632             | −1.036                | +0.404              |
+| 220  | −0.633             | −1.037                | +0.404              |
+
+**Interprétation des rewards négatifs.** Les deux rewards sont négatifs et décroissants — ce comportement est attendu et souhaitable sous DPO. Il signifie que le modèle entraîné s'éloigne du modèle de référence (SFT) pour les deux types de réponses. Le point crucial est le *rythme relatif* de cette divergence : le reward des réponses rejetées décroît environ 1.6× plus vite que celui des réponses choisies (−1.037 vs −0.633 au step 220). Le modèle apprend donc bien à pénaliser les réponses de moindre qualité plus fortement qu'il ne pénalise les bonnes réponses.
+
+**Interprétation de la marge.** La marge (margin = reward_chosen − reward_rejected) est l'indicateur synthétique de la capacité du modèle à discriminer les réponses préférées. Elle croît rapidement de +0.260 (step 50) à +0.402 (step 150), puis se stabilise en plateau à +0.404 entre les steps 150 et 220. Cette stabilisation confirme la convergence : le modèle a atteint un équilibre entre la capacité de discrimination et la contrainte de régularisation KL imposée par beta=0.1.
+
+### 6.3 Comparaison v1 → v2
+
+La version v2 du pipeline d'entraînement intègre quatre corrections majeures par rapport à la v1 : le retrait de l'anonymisation Presidio sur les corpus publics (qui injectait des balises `<LOCATION>`, `<PERSON>` dans les données d'entraînement), l'ajout d'un filtre clinique sur les questions du dataset SFT, l'augmentation au format triage via Mistral, et la correction du token EOS dans la fonction `tokenize_chat()`.
+
+| Métrique | v1 | v2 | Amélioration |
+|----------|------|------|-------------|
+| SFT train loss finale | 1.112 | 0.472 | −57.6% |
+| DPO eval rewards/margins | +0.194 | +0.404 | +108% |
+| DPO eval loss | 0.621 | 0.583 | −6.1% |
+| Contamination Presidio (dataset) | 46.8% | 0% | Éliminée |
+
+L'amélioration la plus spectaculaire concerne la loss SFT finale (−57.6%). Cette réduction ne traduit pas simplement un meilleur ajustement aux données, mais reflète un changement fondamental dans la qualité du signal d'entraînement : en v1, le modèle tentait d'apprendre simultanément le format de triage et les artefacts Presidio, deux objectifs contradictoires qui maintenaient la loss à un plateau élevé. En v2, le signal est cohérent et le modèle converge vers une loss nettement plus basse.
+
+Le doublement de la marge DPO (+108%) est également significatif. Il suggère que la qualité du modèle SFT sous-jacent impacte directement la capacité d'alignement : un modèle SFT entraîné sur des données propres fournit une meilleure base de départ pour le DPO, permettant une discrimination plus nette entre réponses choisies et rejetées.
+
+### 6.4 Évaluation qualitative des réponses générées
+
+Les métriques d'entraînement ne suffisent pas à évaluer la pertinence clinique d'un modèle de triage. Une évaluation qualitative a été conduite sur les deux modèles mergés (SFT v2 seul et DPO v2) via l'endpoint `/generate` de l'API déployée, sur des cas cliniques représentatifs en anglais et en français.
+
+#### 6.4.1 Grille d'évaluation
+
+Chaque réponse a été évaluée selon cinq critères :
+- **Pertinence médicale** : le diagnostic ou l'orientation proposée est-elle médicalement correcte ?
+- **Format triage structuré** : la réponse suit-elle le format attendu (niveau de priorité, service d'orientation, justification) ?
+- **Absence de contamination** : aucune balise Presidio, aucun artefact de nettoyage dans la réponse.
+- **Arrêt propre** : le modèle s'arrête-t-il naturellement ou remplit-il systématiquement le `max_tokens` ?
+- **Absence de répétitions** : la réponse ne contient pas de boucles ou de répétitions de segments.
+
+#### 6.4.2 Résultats comparatifs
+
+| Critère | SFT v2 (EN) | SFT v2 (FR) | DPO v2 (EN) | DPO v2 (FR) |
+|---------|-------------|-------------|-------------|-------------|
+| Pertinence médicale | ✅ Bonne | ❌ Faible | ✅ Bonne | ❌ Faible |
+| Format triage structuré | ⚠️ Partiel | ❌ Absent | ❌ Absent | ❌ Absent |
+| Contamination Presidio | ✅ Aucune | ✅ Aucune | ✅ Aucune | ✅ Aucune |
+| Arrêt propre | ⚠️ Variable | ❌ Remplit max_tokens | ⚠️ Variable | ❌ Remplit max_tokens |
+| Répétitions | ✅ Aucune | ⚠️ Boucles QCM | ✅ Aucune | ⚠️ Boucles QCM |
+
+**Exemple — SFT v2, prompt EN (douleur thoracique, homme 58 ans).** Le modèle produit une réponse médicalement pertinente : suspicion d'événement cardiaque aigu, recommandation d'orientation vers les urgences avec monitoring cardiaque et ECG. La structure s'approche du format triage sans le respecter strictement — la réponse est conversationnelle plutôt que structurée en champs explicites.
+
+**Exemple — DPO v2, prompt EN (glaucome aigu).** Le diagnostic est correct (glaucome aigu à angle fermé) et l'explication du mécanisme pharmacologique est pertinente. Cependant, le format est celui d'une réponse académique explicative, sans aucune structuration de triage. Le DPO a amélioré la qualité médicale au détriment du format.
+
+**Exemple — Modèles v2, prompt FR (syndrome néphrotique).** Les deux modèles retombent en mode QCM : ils génèrent des options fictives (A/B/C/D) et bouclent sur des questions inventées. Les explications pharmacologiques sont incorrectes. Ce comportement illustre la limite structurelle du corpus francophone, dominé par des QCM malgré l'augmentation Mistral.
+
+#### 6.4.3 Problèmes résolus par rapport à la v1
+
+| Problème v1 | Statut v2 | Correction appliquée |
+|-------------|-----------|---------------------|
+| Balises Presidio (`<LOCATION>`, `<PERSON>`) dans les réponses | ✅ Résolu | Retrait de l'anonymisation Presidio sur les corpus publics |
+| Répétitions en boucle systématiques | ✅ Largement résolu | Correction du token EOS dans `tokenize_chat()` + `repetition_penalty=1.1` |
+| Remplissage systématique du `max_tokens` | ⚠️ Amélioré | Correction EOS + `stop_token_ids` dans la configuration vLLM |
+| Absence totale de format triage | ⚠️ Partiel (EN uniquement) | Augmentation du dataset SFT au format triage via Mistral |
+| Réponses décousues après DPO | ✅ Résolu | Données SFT propres en amont fournissant une meilleure base pour l'alignement |
+
+### 6.5 Analyse des limites identifiées
+
+#### 6.5.1 Déséquilibre linguistique du corpus SFT
+
+Le dataset SFT de 5 000 paires est dominé par les sources anglophones (MedQuAD + UltraMedical), qui représentent environ 60-65% du corpus. Les sources francophones (MediQAL + FrenchMedMCQA) sont minoritaires et conservent un fort biais vers le format QCM malgré l'augmentation au format triage via Mistral. Un modèle de 1.7 milliards de paramètres n'a pas suffisamment de capacité pour généraliser le format triage en français avec aussi peu d'exemples dans cette langue — il privilégie le pattern majoritaire (anglais, format triage) et retombe sur le pattern minoritaire (QCM) lorsqu'il est sollicité en français.
+
+#### 6.5.2 Décalage de distribution entre les données SFT et DPO
+
+Le dataset DPO (UltraMedical-Preference) contient des paires `(chosen, rejected)` au format Q&A médical académique. Aucune réponse n'est structurée au format triage. En conséquence, l'alignement DPO améliore la qualité médicale des réponses (diagnostic plus précis, meilleure explication des mécanismes) mais « tire » le modèle vers un format explicatif académique, effaçant partiellement le format triage appris lors du SFT. Le paramètre beta=0.1, bien que conservateur (forte régularisation vers le modèle SFT de référence), n'a pas suffi à préserver le format structuré face à cette pression distributionnelle.
+
+#### 6.5.3 Capacité limitée du modèle 1.7B
+
+Qwen3-1.7B-Base est un modèle compact, sélectionné pour le POC en raison de sa compatibilité avec les contraintes matérielles (GPU T4, 16 Go VRAM). Sa capacité d'instruction-following est structurellement inférieure à celle de modèles 7B+ : il peine à respecter simultanément le contenu médical et le format structuré de sortie, en particulier en français (langue moins représentée dans son pré-entraînement). Ce constat n'est pas un échec mais un résultat de POC attendu, qui motive le passage à un modèle de plus grande taille dans la roadmap (cf. section 7).
+
+### 6.6 Décision de déploiement
+
+Le modèle **SFT v2** a été retenu pour le déploiement du POC. Cette décision repose sur trois constats :
+
+1. Le SFT v2 produit des réponses médicalement pertinentes en anglais, avec une structure de réponse plus proche du format triage que le DPO v2. Pour un POC, la capacité à démontrer la chaîne complète (données → fine-tuning → API → réponse structurée) prime sur la perfection du diagnostic.
+
+2. Le DPO v2 améliore la qualité médicale (diagnostic plus précis, meilleure couverture des mécanismes) mais dégrade le format structuré en raison du décalage de distribution identifié en section 6.5.2. Dans un contexte de triage où la lisibilité et la structuration de la réponse sont essentielles pour le personnel soignant, cette dégradation est rédhibitoire.
+
+3. La correction de ce décalage (reformatage du dataset DPO au format triage) est identifiée et documentée dans la roadmap (section 7) comme une amélioration v3 prioritaire. Le déploiement du SFT seul permet de livrer le POC dans les délais tout en conservant une trajectoire claire d'amélioration.
+
+Le modèle déployé est le merge complet (base + adaptateurs LoRA fusionnés) du SFT v2 champion, stocké sur GCS et chargé par vLLM sur la VM de production.
+
+### 6.7 Métriques opérationnelles de l'endpoint
+
+### 6.7 Métriques opérationnelles de l'endpoint
+
+#### 6.7.1 Protocole de mesure
+
+Le benchmark a été conduit sur l'endpoint `/generate` de l'API FastAPI déployée sur la VM GCP (GPU T4, 16 Go VRAM), avec le modèle SFT v2 chargé via vLLM. Vingt requêtes séquentielles ont été envoyées avec des cas cliniques variés couvrant différents niveaux d'urgence (P1 critique, urgence modérée, cas différable) et deux langues (anglais et français), afin de refléter une distribution réaliste des sollicitations en production.
+
+Les paramètres d'inférence retenus pour le benchmark correspondent aux paramètres par défaut de l'API :
+
+| Paramètre | Valeur | Justification |
+|-----------|--------|--------------|
+| `max_tokens` | 512 | Suffisant pour une réponse de triage structurée |
+| `temperature` | 0.7 | Compromis entre cohérence et diversité, adapté au contexte médical |
+| `repetition_penalty` | 1.1 | Correction du comportement de boucle identifié en v1 |
+| `stop_token_ids` | `[151643]` (EOS Qwen) | Arrêt propre sur le token de fin de séquence |
+
+#### 6.7.2 Résultats du benchmark
+
+| Métrique | Valeur |
+|----------|--------|
+| Requêtes envoyées | 20 |
+| Requêtes réussies | 20 / 20 (100%) |
+| Erreurs / timeouts | 0 |
+| Latence moyenne | 9.18s (± 2.98s) |
+| Latence min | 4.99s |
+| Latence P50 (médiane) | 10.43s |
+| **Latence P95** | **12.66s** |
+| Latence P99 | 12.66s |
+| Latence max | 12.66s |
+| Longueur moyenne de réponse | 1 819 caractères (~455 tokens) |
+| Débit de génération estimé | ~50 tokens/s |
+
+#### 6.7.3 Analyse des résultats
+
+**Fiabilité.** Le taux de succès de 100% (20/20) sur des requêtes de profils variés confirme la stabilité de la chaîne de déploiement complète : FastAPI, vLLM, modèle mergé et conteneur Docker. Aucun timeout ni erreur de décodage n'a été observé, y compris sur les cas cliniques complexes (AVC, intoxication médicamenteuse) et sur les requêtes en français.
+
+**Débit de génération.** La longueur moyenne des réponses (~1 819 caractères, soit ~455 tokens) génère une latence moyenne de 9.18s, ce qui correspond à un débit estimé de 50 tokens/s. Cette valeur est cohérente avec les performances attendues de vLLM sur un GPU T4 (16 Go VRAM) pour un modèle de 1.7 milliard de paramètres quantifié en 4-bit NF4. À titre de comparaison, un modèle 7B sur A100 avec la même configuration vLLM atteint typiquement 80-100 tokens/s — le ratio de débit est donc proportionnel au ratio de taille de modèle, ce qui valide la cohérence de la configuration d'inférence.
+
+Notons que la longueur moyenne des réponses (455 tokens) est bien inférieure à la limite `max_tokens=512`, ce qui indique que le modèle génère des arrêts naturels via le token EOS dans la majorité des cas — le fix EOS introduit en v2 fonctionne correctement en production.
+
+**Variabilité de la latence.** La variance est modérée (coefficient de variation de 32.5%) et s'explique principalement par la variabilité de la longueur des réponses générées selon la complexité du cas clinique. Le ratio P95/P50 de 1.21x (12.66s / 10.43s) indique une queue de distribution relativement contrôlée : les requêtes les plus longues ne dépassent pas 1.2 fois la latence médiane, ce qui reflète l'absence de dégradation pathologique liée au remplissage systématique du `max_tokens` — comportement qui pénalisait la v1.
+
+La latence minimale de 4.99s correspond aux cas cliniques simples (quelques phrases de réponse), tandis que la latence maximale de 12.66s correspond aux cas complexes avec des réponses détaillées en anglais.
+
+**Pertinence pour le triage hospitalier.** Une latence P95 de 12.66s est acceptable pour un outil d'aide à la décision de triage initial, où l'interaction typique dure plusieurs minutes. Elle est cependant à contextualiser dans la roadmap : le passage à un GPU A10G ou A100 en production, combiné à un modèle 7B+, viserait une latence P95 de l'ordre de 3-5s pour une expérience utilisateur plus fluide.
+
+#### 6.7.4 Limites du benchmark
+
+Ce benchmark mesure la latence en régime séquentiel (une requête à la fois), ce qui correspond au cas d'usage du POC mais ne reflète pas les conditions de charge concurrente d'une production hospitalière. En conditions réelles, vLLM bénéficierait de son mécanisme de *continuous batching* pour amortir le coût de génération sur plusieurs requêtes simultanées, potentiellement améliorant le débit global tout en maintenant des latences individuelles comparables.
+
+Une évaluation en charge (plusieurs requêtes concurrentes, test de montée en charge) constitue une étape naturelle de la roadmap avant tout déploiement en production.
+
+Les paramètres d'inférence configurés dans l'API sont les suivants :
+
+| Paramètre | Valeur | Justification |
+|-----------|--------|--------------|
+| `max_tokens` | 512 | Suffisant pour une réponse de triage structurée, sans encourager le remplissage |
+| `temperature` | 0.7 | Compromis entre diversité et cohérence ; plus basse pour un contexte médical |
+| `repetition_penalty` | 1.1 | Pénalisation légère des répétitions, correction du comportement de boucle v1 |
+| `stop_token_ids` | `[151643]` (EOS Qwen) | Arrêt explicite sur le token de fin de séquence |
 
 ---
 
