@@ -472,7 +472,7 @@ clean_ultramed ───────┘
 clean_ultramed ───────────────────────────────────────────→ generate_dpo
 ```
 
-Le pipeline compte sept stages au total. Les quatre stages de nettoyage
+Le pipeline compte huit stages au total. Les quatre stages de nettoyage
 (`clean_*`) sont indépendants et peuvent être exécutés en parallèle. Les trois
 stages SFT (`generate_sft` → `triage_augmentation` → `split_sft`) sont
 séquentiels — le split est volontairement placé après l'augmentation pour que
@@ -735,7 +735,7 @@ gradient_accumulation_steps: 32
 
 La taille de batch effective est le produit de ces deux paramètres : `1 × 32 = 32` exemples par step d'optimisation. Ce découpage est une adaptation aux contraintes mémoire du GPU T4 : un seul exemple est traité à la fois (batch size physique de 1), mais les gradients sont accumulés sur 32 forward passes consécutifs avant d'effectuer un step d'optimisation. Le résultat mathématique est équivalent à un batch de 32 exemples traités simultanément — la différence réside uniquement dans la consommation mémoire, qui est divisée par 32.
 
-Avec 3 500 exemples d'entraînement et un batch effectif de 32, chaque epoch comprend `3 500 / 32 ≈ 110 steps`, soit **330 steps pour 3 epochs**.
+Avec 3 500 exemples d'entraînement et un batch effectif de 32, chaque epoch comprend `3 500 / 32 ≈ 110 steps`, soit **220 steps pour 2 epochs**.
 
 #### 3.6.2 Taux d'apprentissage et planification
 
@@ -749,9 +749,9 @@ Le taux d'apprentissage de `2e-4` est nettement plus élevé que celui typiqueme
 
 La planification du learning rate suit un schéma en trois phases :
 1. **Warmup** (steps 0 à 30) : le learning rate monte progressivement de 0 à `2e-4`. Cette montée graduelle stabilise l'entraînement dans les premiers steps, où les gradients peuvent être bruités.
-2. **Décroissance cosinus** (steps 30 à 330) : le learning rate décroît selon une courbe cosinusoïdale de `2e-4` vers 0. Ce profil de décroissance, plus doux qu'une décroissance linéaire, permet au modèle d'effectuer des mises à jour fines dans les derniers steps.
+2. **Décroissance cosinus** (steps 30 à 220) : le learning rate décroît selon une courbe cosinusoïdale de `2e-4` vers 0. Ce profil de décroissance, plus doux qu'une décroissance linéaire, permet au modèle d'effectuer des mises à jour fines dans les derniers steps.
 
-Les 30 warmup steps représentent environ 10% des 330 steps totaux, une proportion standard dans la littérature.
+Les 30 warmup steps représentent environ 14% des 220 steps totaux, une proportion standard dans la littérature.
 
 #### 3.6.3 Nombre d'epochs et régularisation
 
@@ -839,7 +839,24 @@ Les fonctions d'accès aux configurations (`_get_lora_config()`, `_get_model_nam
 
 **`train_sft.py`** — Script principal d'entraînement. La fonction `main()` orchestre les cinq étapes dans un ordre précis :
 
-1. **Tokenisation** (`tokenize_flow`) — Les datasets train et validation sont tokenisés en premier, avant tout chargement de modèle. Si une erreur survient dans les données (fichier manquant, format incorrect), elle est détectée sans avoir consommé la mémoire GPU.
+1. **Tokenisation** (`tokenize_flow`) — Les datasets train et validation sont 
+tokenisés en premier, avant tout chargement de modèle. Si une erreur survient 
+dans les données (fichier manquant, format incorrect), elle est détectée sans 
+avoir consommé la mémoire GPU.
+
+Un correctif important a été apporté à la fonction `tokenize_chat()` appelée 
+dans cette étape : lors d'une troncation à `max_length=512`, le token de fin 
+`<|im_end|>` était systématiquement supprimé pour les séquences longues, le 
+tokenizer tronquant par la droite. Le modèle apprenait alors sur des exemples 
+sans signal de fin explicite, ce qui produisait un remplissage systématique 
+jusqu'à `max_tokens` en inférence. Le correctif garantit que `<|im_end|>` reste 
+toujours le dernier token après troncation :
+
+```python
+eos_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+if input_ids[-1] != eos_token_id:
+    input_ids[-1] = eos_token_id
+```
 2. **DataCollator** (`get_data_collator`) — Instanciation du collator pour le padding dynamique.
 3. **TrainingArguments** (`define_training_arguments`) — Construction de l'objet de configuration à partir de `params.yaml`.
 4. **Modèle** (`define_model`) — Chargement quantifié + application LoRA. C'est l'étape la plus coûteuse en mémoire.
@@ -1127,19 +1144,6 @@ LoRA dans `models/dpo_model_trained/` et pushé vers GCS via MLflow (tag
 Qwen3-1.7B-Base via `generate_model_for_deployment.py` pour produire le modèle
 monolithique chargé par vLLM en production.
 
-L'analyse des résultats portera sur les axes suivants :
-
-**Métriques quantitatives :**
-- Évolution de la `rewards/chosen` et `rewards/rejected` au fil des steps (indicateurs directs de la qualité de l'alignement)
-- `rewards/margins` = différence entre les deux — à surveiller : une marge trop faible indique que le modèle ne discrimine pas suffisamment chosen et rejected
-- Train loss et eval loss DPO
-- Perplexité sur le jeu de test SFT avant et après DPO (pour s'assurer que le DPO n'a pas dégradé les capacités acquises)
-
-**Analyse qualitative :**
-- Comparaison de réponses du modèle SFT vs DPO sur une sélection de questions cliniques du jeu de test
-- Vérification que les niveaux d'urgence (maximale / modérée / différée) sont mieux calibrés après alignement
-- Détection d'éventuelles régressions (cas où le modèle SFT répondait correctement mais le modèle DPO produit une réponse dégradée)
-
 ---
 
 ## 5. Déploiement et infrastructure
@@ -1272,7 +1276,7 @@ L'API est alors accessible sur `http://<IP_VM>:8000/docs` (Swagger UI) pour les 
 Un point d'architecture important est la distinction entre deux pipelines indépendants :
 
 - **Le pipeline CI/CD de déploiement** (objet de cette section) automatise la chaîne tests → build Docker → push registre → déploiement SSH. Il est déclenché par les commits sur le code applicatif (API, configuration, tests) et ne manipule jamais les données d'entraînement.
-- **Le pipeline de données** (section 2.7) orchestre la chaîne DVC (`dvc repro`) de nettoyage, anonymisation et génération des datasets. Il est déclenché manuellement et versionne les données sur GCS.
+- **Le pipeline de données** (section 2.7) orchestrée par DVC (dvc repro) de nettoyage, filtrage clinique, augmentation et génération des datasets. Il est déclenché manuellement et versionne les données sur GCS.
 
 Cette séparation est fondamentale : le conteneur Docker de déploiement ne contient pas les datasets, le modèle est figé (mergé SFT+DPO). Les datasets appartiennent au pipeline de données, qui constitue une boucle distincte avec son propre mécanisme de versionnement (DVC).
 
@@ -1624,7 +1628,7 @@ FINE-TUNING_MEDICAL/
 │   ├── unit/                   # Tests logique pure (schemas, paths, logger)
 │   ├── integration/            # Tests API avec mock vLLM
 │   └── smoke/                  # Tests structure Dockerfile / CI
-├── dvc.yaml                    # Pipeline DVC (6 stages)
+├── dvc.yaml                    # Pipeline DVC (8 stages)
 ├── params.yaml                 # Tous les hyperparamètres paramétrables
 ├── Dockerfile
 ├── .dockerignore
