@@ -93,9 +93,9 @@ jobs:
             # Limitation connue : à mettre à jour si un nouveau merge est effectué.
             mkdir -p ~/models
 
-
+            # chargement du nouveau model sft
             gsutil -m cp -r \
-              gs://p14-medical-data/mlflow-artifacts/1/5ac693efafb44d4aa9401c5729bcac41/artifacts/merged_model_dpo_for_deployment \ 
+              gs://p14-medical-data/mlflow-artifacts/1/22341f87bfd0420ca7fbc43fa20e2a1a/artifacts/merged_model_sft_for_deployment \ 
               ~/models/
 
             # 3. Pull la nouvelle image

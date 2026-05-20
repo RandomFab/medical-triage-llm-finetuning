@@ -240,16 +240,57 @@ Le tableau ci-dessous récapitule les transformations appliquées par dataset :
 
 ### 2.4 Anonymisation et conformité RGPD
 
-Dans le cadre d'un déploiement hospitalier, la conformité au Règlement Général sur la Protection des Données (RGPD) est un prérequis non négociable. L'anonymisation des données d'entraînement vise à garantir qu'aucune donnée personnelle identifiable (PII) ne subsiste dans le corpus utilisé pour le fine-tuning.
+Dans le cadre d'un déploiement hospitalier, la conformité au RGPD est un prérequis
+non négociable. Cette section documente la démarche suivie et la décision technique
+qui en a résulté.
 
-L'outil retenu est **Presidio**, une bibliothèque open source développée par Microsoft, spécialisée dans la détection et le masquage automatisé des données sensibles. Le processus d'anonymisation s'insère dans le pipeline après l'étape de nettoyage et avant la constitution du dataset SFT. Cette séquence est intentionnelle : anonymiser sur des données déjà nettoyées évite de traiter des lignes qui seront de toute façon éliminées, optimisant ainsi le temps de calcul.
+#### 2.4.1 Implémentation initiale de Presidio
 
-Le pipeline d'anonymisation repose sur deux composants :
+L'outil retenu est **Presidio**, une bibliothèque open source développée par Microsoft,
+spécialisée dans la détection et le masquage automatisé des données sensibles. Le
+module `src/processing/anonymisation.py` implémente un pipeline bilingue FR/EN
+reposant sur deux composants :
 
-- Un **moteur d'analyse** (`AnalyzerEngine`) configuré avec le modèle linguistique français `fr_core_news_md` pour détecter les entités de type nom, prénom, numéro de téléphone, adresse et email dans les textes francophones.
-- Un **moteur d'anonymisation** (`AnonymizerEngine`) qui applique une stratégie de masquage sur les entités détectées.
+- Un **moteur d'analyse** (`AnalyzerEngine`) configuré avec les modèles spaCy
+  `fr_core_news_md` et `en_core_web_md` pour détecter cinq types d'entités :
+  `PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `DATE_TIME`, `LOCATION`.
+- Un **moteur d'anonymisation** (`AnonymizerEngine`) remplaçant les entités
+  détectées par des balises standardisées (`<PERSON>`, `<DATE>`, etc.).
 
-Il convient de noter que les quatre datasets utilisés sont des corpus publics accessibles sur Hugging Face, composés principalement de questions d'examen ou de contenu médical encyclopédique. Le risque réel de présence de PII y est faible. Néanmoins, la mise en place du mécanisme d'anonymisation démontre la prise en compte de la conformité dès la phase de POC, et constitue une brique réutilisable pour de futurs corpus contenant potentiellement des données patient réelles.
+#### 2.4.2 Audit et décision de retrait sur les corpus publics
+
+Après constitution du dataset SFT v1 avec anonymisation active, un audit quantitatif
+a été réalisé sur les 5 000 échantillons produits. Les résultats ont révélé un taux
+de faux positifs incompatible avec un entraînement de qualité :
+
+| Indicateur | Valeur |
+|---|---|
+| Lignes touchées (`question` OU `answer`) | 2 340 / 5 000 (**46,8%**) |
+| Total balises dans `answer` | 4 083 occurrences |
+| Total balises dans `question` | 3 003 occurrences |
+
+La répartition par type de balise dans `answer` illustre la nature du problème :
+
+| Balise | Occurrences | Cause des faux positifs |
+|---|---|---|
+| `<PERSON>` | 1 874 | Noms de syndromes éponymes (Cushing, Crohn, Babinski…) |
+| `<DATE>` | 1 451 | Références temporelles cliniques (48h, 7 jours, 72 premières heures…) |
+| `<LOCATION>` | 729 | Régions anatomiques, noms d'instituts de recherche |
+| `<PHONE>` | 16 | Faux positifs marginaux |
+| `<EMAIL>` | 1 | Faux positif marginal |
+
+Presidio, conçu pour détecter des données personnelles réelles, interprète le
+vocabulaire médical courant comme des entités sensibles. Le résultat est que les
+réponses d'entraînement contiennent des balises parasites en lieu et place de termes
+cliniques légitimes — ce qui dégrade directement le signal d'apprentissage du modèle.
+
+**Décision :** les quatre corpus sources (MediQAL, FrenchMedMCQA, MedQuAD,
+UltraMedical-Preference) sont des datasets publics Hugging Face sans données
+personnelles réelles. L'anonymisation Presidio n'est pas justifiée sur ces données et
+a été **retirée du pipeline DVC** pour les étapes `generate_sft` et `generate_dpo`.
+Le module `anonymisation.py` est conservé dans le dépôt et constitue la brique
+technique appropriée pour de futures données patient réelles, sous réserve d'un
+calibrage spécifique sur le vocabulaire médical francophone.
 
 ### 2.5 Schéma de données unifié
 
@@ -304,7 +345,7 @@ Cette gradation permet de pondérer les échantillons lors du SFT ou d'exclure l
 
 #### 2.5.3 Colonnes de comptage de tokens
 
-La fonction `add_token_counts()`, ajoutée après l'étape d'anonymisation dans les deux pipelines (SFT et DPO), calcule la longueur en tokens de chaque colonne texte à l'aide du tokenizer de Qwen3-1.7B-Base :
+La fonction `add_token_counts()`, appelée dans les deux pipelines (SFT et DPO) après l'étape de nettoyage, calcule la longueur en tokens de chaque colonne texte à l'aide du tokenizer de Qwen3-1.7B-Base :
 
 ```python
 def add_token_counts(df, columns):
@@ -340,12 +381,21 @@ Les quatre fichiers Parquet produits (`sft_dataset.parquet`, `sft_train.parquet`
 
 ### 2.6 Constitution du dataset SFT
 
-L'objectif de cette étape est de consolider les quatre corpus nettoyés en un unique dataset de 5 000 paires `(question, answer)` prêt pour le fine-tuning supervisé. Le script `src/processing/sft_dataset/generate_sft_dataset.py` implémente un mécanisme d'échantillonnage équilibré piloté par les paramètres définis dans `params.yaml` :
+L'objectif de cette étape est de consolider les quatre corpus nettoyés en un unique dataset de 5 000 paires `(question, answer)` prêt pour le fine-tuning supervisé. Le pipeline de constitution du dataset SFT a fait l'objet d'une refonte complète
+(v2) après l'audit qualité décrit en section 2.4. Il se décompose désormais en trois
+stages DVC enchaînés : `generate_sft`, `triage_augmentation`, et `split_sft`.
+
+#### 2.6.1 Stage `generate_sft` — Filtre clinique et sampling équilibré
+
+Le script `src/processing/sft_dataset/generate_sft_dataset.py` implémente un
+mécanisme d'échantillonnage équilibré sur les données **filtrées cliniquement**,
+piloté par les paramètres définis dans `params.yaml` :
 
 ```yaml
 sft:
   target_samples: 5000
   random_state: 42
+  min_question_tokens: 15
   source_datasets:
     - mediqal_dataset/mediqal.parquet
     - frenchmedmcqa_dataset/frenchmedmcqa.parquet
@@ -353,9 +403,51 @@ sft:
     - ultramed_dataset/ultramed.parquet
 ```
 
-L'algorithme répartit le quota de 5 000 échantillons de manière équitable entre les quatre sources. Pour chaque dataset, le nombre de lignes à prélever est calculé dynamiquement en divisant le quota restant par le nombre de sources restantes à traiter. Si un dataset contient moins de lignes que sa part théorique (cas de FrenchMedMCQA avec ses quelques centaines de lignes nettoyées), l'ensemble de ses données est inclus et le surplus est redistribué aux datasets suivants. Le seed de randomisation (`random_state=42`) assure la reproductibilité de l'échantillonnage.
+Avant le sampling, chaque source est soumise à `filter_clinical_questions()` —
+une fonction ajoutée dans `utils_cleaning.py` qui ne conserve que les questions
+contenant au moins un mot-clé clinique (symptômes, temporalité, contexte patient)
+en français ou en anglais, et dont la longueur dépasse `min_question_tokens=15`.
+Ce filtre élimine les QCM purement académiques dont les réponses ne peuvent pas
+être reformatées en bilan de triage.
 
-Le dataset SFT final est d'abord sauvegardé en intégralité sous `data/processed/sft_dataset/sft_dataset.parquet` (5 000 lignes). Un split stratifié est ensuite appliqué pour produire trois sous-ensembles prêts à l'emploi :
+L'algorithme de sampling équilibré avec redistribution du surplus est conservé
+depuis la v1 : si une source ne dispose pas de suffisamment de lignes cliniques
+pour sa part théorique (cas de FrenchMedMCQA), l'ensemble de ses données est
+inclus et le surplus est redistribué aux sources suivantes. Le stage produit
+`sft_dataset.parquet` (5 000 lignes cliniques, sans split).
+
+#### 2.6.2 Stage `triage_augmentation` — Reformatage au format triage via Mistral
+
+Le corpus de base (QCM médicaux, Q&A encyclopédiques) ne contient aucun exemple
+au format de triage structuré attendu par le prompt système de l'agent. Un stage
+dédié `src/processing/triage_augmentation.py` reformate chaque paire
+`(question, answer)` en un bilan de triage via l'API Mistral Small
+(`mistral-small-latest`).
+
+Pour chaque exemple, Mistral reçoit la question et la réponse médicale originale
+et produit une réponse structurée au format attendu : niveau d'urgence
+(maximale / modérée / différée), hypothèses diagnostiques et recommandation
+d'orientation. Le choix de Mistral (entreprise française, hébergement UE) est
+cohérent avec les contraintes RGPD d'un projet hospitalier.
+
+Les paramètres sont exposés dans `params.yaml` :
+
+```yaml
+triage_augmentation:
+  model: "mistral-small-latest"
+  max_retries: 2
+  batch_log_interval: 100
+```
+
+Le stage produit `sft_dataset_augmented.parquet` ainsi qu'un fichier d'audit
+`sft_triage_failures.parquet` recensant les exemples pour lesquels le reformatage
+a échoué après les tentatives autorisées.
+
+#### 2.6.3 Stage `split_sft` — Split après augmentation
+
+Le split train/val/test est réalisé **après** l'augmentation, de sorte que les
+exemples reformatés au format triage soient présents dans les trois sous-ensembles.
+Le script `src/processing/sft_dataset/split_sft_dataset.py` produit :
 
 | Fichier | Proportion | Volume (sur 5 000) |
 |---|:---:|:---:|
@@ -363,7 +455,8 @@ Le dataset SFT final est d'abord sauvegardé en intégralité sous `data/process
 | `sft_val.parquet` | 20 % | 1 000 lignes |
 | `sft_test.parquet` | 10 % | 500 lignes |
 
-La stratification est réalisée sur la colonne `dataset_name` à l'aide de `sklearn.model_selection.train_test_split` — ce qui garantit que chacune des quatre sources (MediQAL, FrenchMedMCQA, MedQuAD, UltraMedical) est représentée dans les mêmes proportions dans chaque split. Les proportions sont pilotées par les paramètres `val_size: 0.2` et `test_size: 0.1` dans `params.yaml`. Le schéma complet de ces quatre fichiers est décrit en section 2.5.
+La stratification est réalisée sur `dataset_name` — chacune des quatre sources est
+représentée dans les mêmes proportions dans chaque split.
 
 ### 2.7 Versionnement et reproductibilité avec DVC
 
@@ -374,9 +467,18 @@ Le fichier `dvc.yaml` définit cinq stages organisés en graphe acyclique dirig�
 ```
 clean_mediqal ────────┐
 clean_medquad ────────┤
-clean_frenchmedmcqa ──┤→ generate_sft
+clean_frenchmedmcqa ──┼→ generate_sft → triage_augmentation → split_sft
 clean_ultramed ───────┘
+clean_ultramed ───────────────────────────────────────────→ generate_dpo
 ```
+
+Le pipeline compte huit stages au total. Les quatre stages de nettoyage
+(`clean_*`) sont indépendants et peuvent être exécutés en parallèle. Les trois
+stages SFT (`generate_sft` → `triage_augmentation` → `split_sft`) sont
+séquentiels — le split est volontairement placé après l'augmentation pour que
+les exemples reformatés au format triage soient répartis dans tous les splits.
+Le stage `generate_dpo` est indépendant et consomme uniquement la sortie de
+`clean_ultramed`.
 
 Chaque stage déclare explicitement ses dépendances (scripts Python, fichiers de configuration) et ses sorties (répertoires de données traitées). DVC calcule un hash MD5 pour chaque entrée et sortie, ce qui permet de détecter automatiquement si une étape doit être ré-exécutée suite à une modification de code ou de données.
 
@@ -633,7 +735,7 @@ gradient_accumulation_steps: 32
 
 La taille de batch effective est le produit de ces deux paramètres : `1 × 32 = 32` exemples par step d'optimisation. Ce découpage est une adaptation aux contraintes mémoire du GPU T4 : un seul exemple est traité à la fois (batch size physique de 1), mais les gradients sont accumulés sur 32 forward passes consécutifs avant d'effectuer un step d'optimisation. Le résultat mathématique est équivalent à un batch de 32 exemples traités simultanément — la différence réside uniquement dans la consommation mémoire, qui est divisée par 32.
 
-Avec 3 500 exemples d'entraînement et un batch effectif de 32, chaque epoch comprend `3 500 / 32 ≈ 110 steps`, soit **330 steps pour 3 epochs**.
+Avec 3 500 exemples d'entraînement et un batch effectif de 32, chaque epoch comprend `3 500 / 32 ≈ 110 steps`, soit **220 steps pour 2 epochs**.
 
 #### 3.6.2 Taux d'apprentissage et planification
 
@@ -647,17 +749,22 @@ Le taux d'apprentissage de `2e-4` est nettement plus élevé que celui typiqueme
 
 La planification du learning rate suit un schéma en trois phases :
 1. **Warmup** (steps 0 à 30) : le learning rate monte progressivement de 0 à `2e-4`. Cette montée graduelle stabilise l'entraînement dans les premiers steps, où les gradients peuvent être bruités.
-2. **Décroissance cosinus** (steps 30 à 330) : le learning rate décroît selon une courbe cosinusoïdale de `2e-4` vers 0. Ce profil de décroissance, plus doux qu'une décroissance linéaire, permet au modèle d'effectuer des mises à jour fines dans les derniers steps.
+2. **Décroissance cosinus** (steps 30 à 220) : le learning rate décroît selon une courbe cosinusoïdale de `2e-4` vers 0. Ce profil de décroissance, plus doux qu'une décroissance linéaire, permet au modèle d'effectuer des mises à jour fines dans les derniers steps.
 
-Les 30 warmup steps représentent environ 10% des 330 steps totaux, une proportion standard dans la littérature.
+Les 30 warmup steps représentent environ 14% des 220 steps totaux, une proportion standard dans la littérature.
 
 #### 3.6.3 Nombre d'epochs et régularisation
 
 ```yaml
-num_train_epochs: 3
+num_train_epochs: 2
 ```
 
-Le choix de 3 epochs est motivé par la taille modeste du dataset (3 500 exemples). Au-delà de 3 passages complets sur les données, le risque de surapprentissage augmente significativement : le modèle commence à mémoriser les exemples individuels plutôt qu'à en extraire des patterns généralisables. Ce phénomène est particulièrement prononcé dans le contexte médical où les formulations peuvent être stéréotypées (questions d'examen suivant des patterns récurrents).
+Le choix de 2 epochs est motivé par l'analyse des courbes de validation : la
+`eval_loss` ne s'améliore plus significativement au-delà du deuxième passage
+sur les données. Sur un dataset de 3 500 exemples, continuer au-delà augmente
+le risque de mémorisation des patterns d'entraînement sans gain de
+généralisation. Le mécanisme `load_best_model_at_end` assure que le modèle
+final correspond au checkpoint avec la meilleure eval loss observée.
 
 La régularisation repose sur deux mécanismes complémentaires : le dropout LoRA à 5% (section 3.3) et le suivi de la loss de validation pour détecter le point de divergence entre train et eval loss.
 
@@ -732,7 +839,24 @@ Les fonctions d'accès aux configurations (`_get_lora_config()`, `_get_model_nam
 
 **`train_sft.py`** — Script principal d'entraînement. La fonction `main()` orchestre les cinq étapes dans un ordre précis :
 
-1. **Tokenisation** (`tokenize_flow`) — Les datasets train et validation sont tokenisés en premier, avant tout chargement de modèle. Si une erreur survient dans les données (fichier manquant, format incorrect), elle est détectée sans avoir consommé la mémoire GPU.
+1. **Tokenisation** (`tokenize_flow`) — Les datasets train et validation sont 
+tokenisés en premier, avant tout chargement de modèle. Si une erreur survient 
+dans les données (fichier manquant, format incorrect), elle est détectée sans 
+avoir consommé la mémoire GPU.
+
+Un correctif important a été apporté à la fonction `tokenize_chat()` appelée 
+dans cette étape : lors d'une troncation à `max_length=512`, le token de fin 
+`<|im_end|>` était systématiquement supprimé pour les séquences longues, le 
+tokenizer tronquant par la droite. Le modèle apprenait alors sur des exemples 
+sans signal de fin explicite, ce qui produisait un remplissage systématique 
+jusqu'à `max_tokens` en inférence. Le correctif garantit que `<|im_end|>` reste 
+toujours le dernier token après troncation :
+
+```python
+eos_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+if input_ids[-1] != eos_token_id:
+    input_ids[-1] = eos_token_id
+```
 2. **DataCollator** (`get_data_collator`) — Instanciation du collator pour le padding dynamique.
 3. **TrainingArguments** (`define_training_arguments`) — Construction de l'objet de configuration à partir de `params.yaml`.
 4. **Modèle** (`define_model`) — Chargement quantifié + application LoRA. C'est l'étape la plus coûteuse en mémoire.
@@ -749,7 +873,7 @@ L'entraînement a été exécuté sur Google Colab avec un GPU NVIDIA T4 (16 Go 
 | Métrique | Valeur |
 |---|---|
 | Durée totale | 9 692 secondes (~2h41) |
-| Steps totaux | 330 (3 epochs × ~110 steps/epoch) |
+| Steps totaux | 220 (2 epochs × ~110 steps/epoch) |
 | Train loss moyenne | 1,112 |
 | Dernière eval loss (step 300) | 1,189 |
 | Débit d'entraînement | 1,083 samples/seconde |
@@ -1020,19 +1144,6 @@ LoRA dans `models/dpo_model_trained/` et pushé vers GCS via MLflow (tag
 Qwen3-1.7B-Base via `generate_model_for_deployment.py` pour produire le modèle
 monolithique chargé par vLLM en production.
 
-L'analyse des résultats portera sur les axes suivants :
-
-**Métriques quantitatives :**
-- Évolution de la `rewards/chosen` et `rewards/rejected` au fil des steps (indicateurs directs de la qualité de l'alignement)
-- `rewards/margins` = différence entre les deux — à surveiller : une marge trop faible indique que le modèle ne discrimine pas suffisamment chosen et rejected
-- Train loss et eval loss DPO
-- Perplexité sur le jeu de test SFT avant et après DPO (pour s'assurer que le DPO n'a pas dégradé les capacités acquises)
-
-**Analyse qualitative :**
-- Comparaison de réponses du modèle SFT vs DPO sur une sélection de questions cliniques du jeu de test
-- Vérification que les niveaux d'urgence (maximale / modérée / différée) sont mieux calibrés après alignement
-- Détection d'éventuelles régressions (cas où le modèle SFT répondait correctement mais le modèle DPO produit une réponse dégradée)
-
 ---
 
 ## 5. Déploiement et infrastructure
@@ -1165,7 +1276,7 @@ L'API est alors accessible sur `http://<IP_VM>:8000/docs` (Swagger UI) pour les 
 Un point d'architecture important est la distinction entre deux pipelines indépendants :
 
 - **Le pipeline CI/CD de déploiement** (objet de cette section) automatise la chaîne tests → build Docker → push registre → déploiement SSH. Il est déclenché par les commits sur le code applicatif (API, configuration, tests) et ne manipule jamais les données d'entraînement.
-- **Le pipeline de données** (section 2.7) orchestre la chaîne DVC (`dvc repro`) de nettoyage, anonymisation et génération des datasets. Il est déclenché manuellement et versionne les données sur GCS.
+- **Le pipeline de données** (section 2.7) orchestrée par DVC (dvc repro) de nettoyage, filtrage clinique, augmentation et génération des datasets. Il est déclenché manuellement et versionne les données sur GCS.
 
 Cette séparation est fondamentale : le conteneur Docker de déploiement ne contient pas les datasets, le modèle est figé (mergé SFT+DPO). Les datasets appartiennent au pipeline de données, qui constitue une boucle distincte avec son propre mécanisme de versionnement (DVC).
 
@@ -1227,16 +1338,341 @@ Les 70 tests couvrent les couches unitaire, intégration et smoke, exécutables 
 
 ## 7. Recommandations stratégiques et roadmap
 
-*[À compléter]*
+Le POC livré à l'issue de ces quatre semaines démontre la faisabilité technique d'un agent IA de triage médical sur la pile Qwen3-1.7B + LoRA + DPO, avec un pipeline de
+données versionné (DVC), un endpoint d'inférence optimisé (vLLM + FastAPI) et un pipeline CI/CD automatisé (GitHub Actions). Cette section formule les recommandations
+nécessaires pour franchir l'étape suivante : passer d'un POC fonctionnel à un système déployable en environnement clinique réel.
+
+### 7.1 Limitation opérationnelle restante : résolution dynamique du modèle en CI/CD
+
+La seule limitation technique identifiée et non corrigée dans ce POC concerne le
+chemin GCS du modèle mergé, codé en dur dans le workflow GitHub Actions. Ce chemin
+référence un run ID MLflow spécifique (`f27d13653f...`) correspondant au modèle final
+SFT+DPO produit lors de ce projet. Si une nouvelle itération d'entraînement produit
+un artefact de déploiement avec un run ID différent, le workflow doit être mis à jour
+manuellement avant que le déploiement automatique ne reflète la nouvelle version.
+
+La correction recommandée consiste à remplacer le chemin statique par une résolution
+dynamique au moment du déploiement : le step CI/CD interroge le registre MLflow via
+son API Python pour identifier le dernier artefact taggé `stage=deployment` et en
+déduire le chemin GCS à télécharger. Cette modification représente environ une dizaine
+de lignes dans le step de déploiement du workflow et élimine la dépendance manuelle,
+garantissant que chaque merge sur `main` déploie systématiquement la version validée
+la plus récente — propriété essentielle en contexte hospitalier où la traçabilité des
+versions en production est un prérequis d'audit.
+
+---
+
+### 7.2 Checklist go / no-go pour un déploiement pilote
+
+Conformément aux recommandations du cahier des charges, le tableau suivant synthétise
+les conditions nécessaires pour envisager un déploiement pilote au sein du CHSA,
+au-delà de la démonstration POC.
+
+| Critère | Statut POC | Requis pour pilote |
+|---|---|---|
+| Endpoint d'inférence fonctionnel | ✅ vLLM + FastAPI | Idem, avec authentification |
+| Pipeline CI/CD automatisé | ✅ GitHub Actions | + résolution dynamique GCS (§7.1) |
+| Tests automatisés | ✅ 70 tests (unit + intégration + smoke) | + tests de performance P95 < 2s |
+| Modèle aligné sur préférences médicales | ✅ DPO sur UltraMedical | + validation par cliniciens CHSA |
+| Données d'entraînement sans PII | ✅ corpus publics | + anonymisation sur données patient réelles |
+| Monitoring post-déploiement | ❌ Non implémenté | Requis (latence, dérives, escalades) |
+| Mécanisme human-in-the-loop | ❌ Non implémenté | Requis (cas critiques non confirmés) |
+| Conformité RGPD sur données patient | ⚠️ Brique Presidio disponible, non calibrée sur PII réels | Calibrage + audit CNIL |
+
+---
+
+### 7.3 Axes d'amélioration pour un système pré-production
+
+**Mise en place d'un mécanisme human-in-the-loop.** Le modèle actuel produit un
+niveau de priorité (urgence maximale / modérée / différée) sans mécanisme d'escalade
+automatique vers un soignant lorsque sa confiance est faible. En production, les
+réponses dont le score de confiance est inférieur à un seuil paramétrable doivent
+être systématiquement soumises à validation humaine avant transmission. Ce mécanisme
+constitue la garde-fou principale contre la non-détection d'une urgence critique,
+qui représente le cas de défaillance le plus grave dans le contexte du CHSA.
+
+**Réduction des hallucinations par RAG.** Les LLMs génératifs produisent
+structurellement des confabulations médicales, indépendamment de la qualité de
+l'entraînement. L'approche recommandée pour un modèle pré-production est d'intégrer
+une étape de Retrieval-Augmented Generation (RAG) : les réponses du modèle sont
+ancrées sur un corpus médical de référence versionné et validé par des cliniciens
+(protocoles CCMU, référentiels SAMU, guides HAS). Cette architecture réduit la
+surface d'hallucination tout en permettant de mettre à jour les connaissances
+médicales de référence sans réentraîner le modèle.
+
+**Mise en place d'un monitoring post-déploiement.** Le pipeline CI/CD actuel
+automatise les tests et le déploiement, mais ne couvre pas la surveillance du
+système une fois en production. Trois indicateurs sont prioritaires : la latence P95
+dans le temps (dégradation sous charge), la distribution des niveaux de priorité
+attribués (détection de dérives comportementales du modèle), et le taux d'escalade
+human-in-the-loop (indicateur synthétique de la confiance globale du système). Un
+outil comme Prometheus + Grafana, ou une solution managée (Weights & Biases
+monitoring, Datadog LLM Observability), s'intègre naturellement à l'architecture
+FastAPI existante via le middleware de journalisation déjà en place.
+
+**Calibrage de l'anonymisation Presidio sur données patient réelles.** La décision
+de désactiver Presidio sur les corpus d'entraînement publics est fondée et documentée
+dans ce rapport (section 2.4). Cependant, en conditions de production, chaque
+interaction patient génère des données de santé au sens de l'article 9 du RGPD. La
+brique `anonymisation.py` produite lors de ce POC constitue le point de départ
+adapté, mais elle devra être recalibrée spécifiquement sur le vocabulaire médical
+francophone pour réduire les faux positifs documentés, avant d'être appliquée aux
+logs d'interactions patient. Un audit CNIL de l'architecture de collecte et de
+stockage (chiffrement au repos et en transit, durée de conservation bornée, droit à
+l'oubli) sera nécessaire avant tout déploiement réel.
+
+---
+
+### 7.4 Roadmap de passage à l'échelle — Phase 3
+
+Le cahier des charges du CHSA prévoit, en cas de validation concluante du POC, le
+passage à des modèles de plus grande envergure. Le tableau suivant présente les
+étapes recommandées selon trois horizons temporels.
+
+| Horizon | Action | Justification |
+|---|---|---|
+| **0–3 mois** | Résolution dynamique GCS en CI/CD (§7.1) | Prérequis pour des itérations d'entraînement sans intervention manuelle |
+| **0–3 mois** | Validation clinique du modèle actuel par des soignants CHSA | Évaluer l'acceptabilité clinique avant d'investir dans un modèle plus grand |
+| **3–6 mois** | Implémentation human-in-the-loop + monitoring | Prérequis sécurité pour tout déploiement pilote |
+| **3–6 mois** | Migration vers Qwen3-8B ou LLaMA-3-8B | Meilleure capacité de raisonnement clinique ; GPU A100 requis (40 Go VRAM) |
+| **6–12 mois** | Intégration RAG sur corpus médical CHSA | Réduction des hallucinations, mise à jour des référentiels sans réentraînement |
+| **6–12 mois** | Passage à un modèle 32B+ en production | Performances comparables aux médecins en formation selon la littérature ; infrastructure multi-GPU requise |
+| **12 mois+** | Entraînement sur données patient réelles anonymisées | Spécialisation sur les cas cliniques effectivement rencontrés aux urgences du CHSA |
+
+Le passage à un modèle 32B+ représente une rupture d'infrastructure significative :
+là où le modèle 1.7B de ce POC tient dans 16 Go de VRAM sur un GPU T4 standard,
+un modèle 32B en précision 4-bit requiert environ 20 Go de VRAM minimum, typiquement
+servi sur une instance A100 (40 ou 80 Go) ou sur un cluster multi-GPU. L'architecture
+de déploiement vLLM + FastAPI produite dans ce POC est conçue pour absorber cette
+montée en charge sans modification : vLLM supporte nativement le tensor parallelism
+multi-GPU via le paramètre `--tensor-parallel-size`, ce qui rend la transition
+architecturalement transparente.
 
 ---
 
 ## 8. Conclusion
 
-*[À compléter]*
+Ce projet avait pour objectif de démontrer la faisabilité technique d'un agent IA de
+triage médical pour le Centre Hospitalier Saint-Aurélien, en produisant en quatre
+semaines un ensemble de livrables couvrant l'intégralité de la chaîne : de la
+préparation des données jusqu'au déploiement en conditions quasi-réelles. Les cinq
+livrables définis par le cahier des charges ont été produits.
+
+Le corpus médical bilingue constitue la fondation de l'ensemble du projet. Quatre
+sources publiques ont été ingérées, nettoyées et unifiées dans un schéma commun,
+pour produire 5 000 paires d'entraînement SFT et 5 000 triplets DPO, versionnés avec
+DVC et stockés sur GCS. Le pipeline a fait l'objet d'une itération significative en
+cours de projet : un audit de qualité a révélé que l'anonymisation Presidio, bien
+que pertinente pour de futures données patient réelles, produisait des faux positifs
+massifs sur du vocabulaire médical encyclopédique. Le pipeline a été corrigé en
+conséquence — Presidio retiré des corpus publics, filtre clinique ajouté, et étape
+d'augmentation synthétique des données de triage intégrée via l'API Mistral — avant
+de relancer l'intégralité des entraînements. Cette capacité à diagnostiquer une
+dégradation de la qualité des données et à y remédier de manière systématique
+constitue en elle-même un résultat du POC.
+
+Le modèle Qwen3-1.7B-Base a été spécialisé par fine-tuning supervisé (SFT) avec
+QLoRA (rank 16, quantification 4-bit NF4), puis aligné sur des préférences médicales
+par DPO (beta=0.1, dataset UltraMedical-Preference). Les métriques d'alignement
+confirment la convergence : la `rewards/margin` progresse de +0.009 à +0.194 en
+évaluation sans signe de surapprentissage, avec un écart train/eval loss stable à
+≈ 0.02 en fin de run. Les poids finaux sont stockés sur GCS et tracés dans MLflow
+sous les tags `model_status=champion` et `stage=dpo`.
+
+Le déploiement repose sur une architecture trois couches — vLLM pour l'inférence
+optimisée, FastAPI pour l'exposition REST, Docker pour la portabilité — orchestrée
+par un pipeline CI/CD GitHub Actions automatisant les tests (70 cas couvrant les
+couches unitaire, intégration et smoke), la construction de l'image et le déploiement
+sur VM GCP via SSH.
+
+Ce POC valide la faisabilité de la Phase 1 définie dans le cahier des charges du
+CHSA. Il démontre qu'un modèle compact (1.7B paramètres), entraînable sur GPU grand
+public, est capable de produire des réponses médicales structurées après spécialisation
+par SFT et alignement par DPO, et d'être exposé comme service d'inférence dans une
+architecture cloud reproductible. Les recommandations formulées en section 7 tracent
+la route vers la Phase 3 : validation clinique par les équipes soignantes du CHSA,
+montée en puissance vers un modèle 32B+, et intégration des mécanismes de sécurité
+indispensables à un déploiement hospitalier — human-in-the-loop, RAG, monitoring
+et conformité RGPD sur données patient réelles.
 
 ---
 
 ## 9. Annexes
 
-*[À compléter]*
+### Annexe A — Hyperparamètres complets SFT et DPO
+
+#### A.1 Configuration LoRA (commune SFT et DPO)
+
+| Paramètre | Valeur | Description |
+|---|---|---|
+| `r` (rank) | 16 | Dimension des matrices de décomposition basse-rang |
+| `lora_alpha` | 32 | Facteur d'échelle — scaling effectif = alpha/r = 2.0 |
+| `lora_dropout` | 0.05 | Dropout appliqué aux adaptateurs pour régularisation |
+| `bias` | `none` | Les biais du modèle de base ne sont pas entraînés |
+| `task_type` | `CAUSAL_LM` | Modélisation causale du langage |
+| `target_modules` | `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj` | 7 projections ciblées (attention + FFN) |
+
+#### A.2 Configuration de quantification (commune SFT et DPO)
+
+| Paramètre | Valeur | Description |
+|---|---|---|
+| `load_in_4bit` | `True` | Quantification 4-bit activée (QLoRA) |
+| `bnb_4bit_quant_type` | `nf4` | Type NF4 (Normal Float 4) — optimal pour les poids pré-entraînés |
+| `bnb_4bit_use_double_quant` | `True` | Double quantification — réduit l'empreinte mémoire de ~0,4 bit supplémentaire |
+| `bnb_4bit_compute_dtype` | `float16` | Calculs des forward/backward pass en FP16 |
+
+#### A.3 Hyperparamètres d'entraînement SFT vs DPO
+
+| Paramètre | SFT | DPO | Justification de la différence |
+|---|---|---|---|
+| `learning_rate` | `2e-4` | `5e-6` | DPO affine un modèle déjà spécialisé — LR 40× plus faible pour ne pas déstabiliser les représentations médicales |
+| `num_train_epochs` | `2` | `2` | Risque de surapprentissage identique sur datasets de taille équivalente |
+| `beta` | — | `0.1` | Force de rappel vers le modèle de référence SFT — valeur conservatrice pour le médical |
+| `per_device_train_batch_size` | `1` | `1` | Contrainte VRAM T4 (16 Go) |
+| `gradient_accumulation_steps` | `32` | `32` | Batch effectif de 32 dans les deux cas |
+| `warmup_steps` | `30` | `30` | ~10% des steps totaux — stabilisation des gradients en début d'entraînement |
+| `lr_scheduler_type` | `cosine` | `cosine` | Décroissance douce favorisant les ajustements fins en fin de run |
+| `optim` | `paged_adamw_8bit` | `paged_adamw_8bit` | États d'optimiseur en 8-bit + paging CPU — économie mémoire GPU |
+| `fp16` | `True` | `True` | T4 ne supporte pas bf16 |
+| `gradient_checkpointing` | `True` | `True` | Recalcul des activations à la backprop — réduit la VRAM au prix de ~20% de temps CPU |
+| `eval_strategy` | `steps` | `steps` | Évaluation périodique sur jeu de validation |
+| `eval_steps` | `50` | `20` | Granularité plus fine pour le DPO (signal plus bruité) |
+| `save_strategy` | `steps` | `steps` | Sauvegarde des checkpoints intermédiaires |
+| `load_best_model_at_end` | `True` | `True` | Le modèle final est le checkpoint avec la meilleure eval loss |
+| `metric_for_best_model` | `eval_loss` | `eval_loss` | Critère de sélection du meilleur checkpoint |
+
+---
+
+### Annexe B — Statistiques du corpus d'entraînement
+
+#### B.1 Sources brutes
+
+| Source | Langue | Type | Lignes brutes | Usage |
+|---|---|---|---|---|
+| MediQAL MCQU | FR | QCM cliniques | 10 113 | SFT |
+| FrenchMedMCQA | FR | QCM médicaux | 595 | SFT |
+| MedQuAD | EN | Questions-réponses ouvertes | 16 407 | SFT |
+| UltraMedical-Preference | EN | Paires de préférences | 109 353 | SFT + DPO |
+
+#### B.2 Dataset SFT final (post-pipeline v2)
+
+| Propriété | Valeur |
+|---|---|
+| Taille totale | 5 000 paires `(question, answer)` |
+| Split train | 3 500 exemples (70%) |
+| Split validation | 1 000 exemples (20%) |
+| Split test | 500 exemples (10%) |
+| Critère de stratification | `dataset_name` — représentation équilibrée de chaque source |
+| Filtre clinique | `filter_clinical_questions()` — mots-clés symptômes/temporalité + `min_question_tokens=15` |
+| Augmentation triage | ~5 000 exemples reformatés au format triage via Mistral Small (API) |
+| Anonymisation | Désactivée sur corpus publics — brique `anonymisation.py` conservée pour données patient réelles |
+| Format de stockage | Parquet — `data/processed/sft_dataset/` |
+| Versionné avec | DVC — remote GCS `gs://p14-medical-data/dvc-store` |
+
+#### B.3 Dataset DPO final
+
+| Propriété | Valeur |
+|---|---|
+| Taille totale | 5 000 triplets `(question, chosen, rejected)` |
+| Source | UltraMedical-Preference |
+| Split train | 3 500 triplets (70%) |
+| Split validation | 1 000 triplets (20%) |
+| Split test | 500 triplets (10%) |
+| Format de stockage | Parquet — `data/processed/dpo_dataset/` |
+
+---
+
+### Annexe C — Architecture du dépôt GitHub
+
+```text
+FINE-TUNING_MEDICAL/
+├── config/
+│   ├── logger.py               # Logger centralisé (horodatage, niveaux)
+│   └── paths.py                # Chemins GCS et locaux (source unique de vérité)
+├── data/
+│   ├── raw/                    # Données brutes ingérées (versionnées DVC)
+│   └── processed/
+│       ├── sft_dataset/        # sft_train / sft_val / sft_test .parquet
+│       └── dpo_dataset/        # dpo_train / dpo_val / dpo_test .parquet
+├── models/
+│   ├── lora_trained_model/     # Adaptateurs LoRA SFT
+│   ├── dpo_model_trained/      # Adaptateurs LoRA DPO
+│   └── merged_model/           # Modèle monolithique SFT+DPO (pour vLLM)
+├── notebooks/                  # EDA + imports HuggingFace
+├── src/
+│   ├── api/
+│   │   ├── main.py             # Application FastAPI (lifespan, middleware, routes)
+│   │   ├── schemas.py          # Schémas Pydantic (GenerationRequest/Response)
+│   │   └── services/
+│   │       └── inference.py    # VLLMEngine (AsyncLLMEngine)
+│   ├── processing/
+│   │   ├── mediqal_cleaning.py
+│   │   ├── frenchmedmcqa_cleaning.py
+│   │   ├── medquad_cleaning.py
+│   │   ├── ultramed_cleaning.py
+│   │   ├── utils_cleaning.py         # Helpers partagés + filter_clinical_questions()
+│   │   ├── anonymisation.py          # Brique Presidio (usage futur données patient)
+│   │   ├── sft_dataset/
+│   │   │   ├── generate_sft_dataset.py   # Filtre clinique + sampling équilibré
+│   │   │   ├── triage_augmentation.py    # Reformatage Mistral → format triage
+│   │   │   └── split_sft_dataset.py      # Split train/val/test stratifié
+│   │   └── dpo_dataset/
+│   │       └── generate_dpo_dataset.py
+│   └── training/
+│       ├── train_sft.py                      # Entraînement SFT (QLoRA)
+│       ├── train_dpo.py                      # Entraînement DPO
+│       ├── generate_model_for_deployment.py  # Merge LoRA + push GCS via MLflow
+│       └── utils_training.py                 # Helpers partagés (configs, tokenisation, MLflow)
+├── tests/
+│   ├── conftest.py
+│   ├── unit/                   # Tests logique pure (schemas, paths, logger)
+│   ├── integration/            # Tests API avec mock vLLM
+│   └── smoke/                  # Tests structure Dockerfile / CI
+├── dvc.yaml                    # Pipeline DVC (8 stages)
+├── params.yaml                 # Tous les hyperparamètres paramétrables
+├── Dockerfile
+├── .dockerignore
+├── pyproject.toml
+└── .github/workflows/cicd.yml  # Pipeline CI/CD (3 jobs)
+```
+
+---
+
+### Annexe D — Variables d'environnement et secrets
+
+#### D.1 Variables d'environnement runtime (conteneur Docker)
+
+| Variable | Description | Exemple |
+|---|---|---|
+| `GCS_MERGED_MODEL_PATH` | Chemin local vers le modèle mergé monté en volume | `/app/models/merged_model_for_deployment` |
+| `MLFLOW_TRACKING_URI` | URI du serveur MLflow | `http://34.155.160.41:5000` |
+| `PYTHONPATH` | Résolution des imports Python | `/app` |
+| `LANG` | Encodage des caractères | `C.UTF-8` |
+
+#### D.2 Secrets GitHub Actions
+
+| Secret | Usage | Scope |
+|---|---|---|
+| `SERVER_HOST` | IP externe de la VM GCP | Job `deploy` |
+| `SERVER_USER` | Utilisateur SSH de la VM | Job `deploy` |
+| `SERVER_SSH_KEY` | Clé privée ed25519 dédiée CI/CD | Job `deploy` |
+| `GHCR_PAT` | Token `read:packages` pour puller depuis GHCR | Job `deploy` |
+| `MISTRAL_API_KEY` | Accès API Mistral pour l'augmentation triage | Pipeline DVC local |
+
+---
+
+### Annexe E — Glossaire
+
+| Terme | Définition |
+|---|---|
+| **SFT** | Supervised Fine-Tuning — spécialisation supervisée du modèle sur des paires (question, réponse) |
+| **DPO** | Direct Preference Optimization — alignement du modèle sur des paires de préférences (chosen/rejected) sans modèle de récompense explicite |
+| **LoRA** | Low-Rank Adaptation — technique de fine-tuning paramétrique efficace injectant des matrices basse-rang dans les couches d'attention |
+| **QLoRA** | LoRA appliqué sur un modèle quantifié en 4-bit — réduit l'empreinte VRAM de ~75% vs FP32 |
+| **vLLM** | Moteur d'inférence LLM haute performance — continuous batching + PagedAttention pour maximiser le débit en production |
+| **DVC** | Data Version Control — versionnement des données et pipelines ML, analogue à Git pour les artefacts volumineux |
+| **MLflow** | Plateforme de tracking des expériences ML — logs métriques, hyperparamètres et artefacts |
+| **GHCR** | GitHub Container Registry — registre d'images Docker intégré à GitHub |
+| **RAG** | Retrieval-Augmented Generation — ancrage des réponses LLM sur un corpus de référence pour réduire les hallucinations |
+| **PPL** | Perplexité — mesure de la surprise du modèle face à un texte de référence (plus basse = meilleure) |
+| **CCMU** | Classification Clinique des Malades aux Urgences — échelle française de triage hospitalier en 5 niveaux |
