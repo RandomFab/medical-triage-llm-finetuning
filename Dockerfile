@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir fastapi uvicorn pydantic python-dotenv
 
 COPY src/ ./src/
 COPY config/ ./config/
+COPY params.yaml /app/params.yaml
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
