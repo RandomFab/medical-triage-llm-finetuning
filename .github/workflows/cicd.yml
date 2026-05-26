@@ -95,7 +95,7 @@ jobs:
 
             # chargement du nouveau model sft
             gsutil -m cp -r \
-              gs://p14-medical-data/mlflow-artifacts/1/22341f87bfd0420ca7fbc43fa20e2a1a/artifacts/merged_model_sft_for_deployment \ 
+              gs://p14-medical-data/mlflow-artifacts/1/22341f87bfd0420ca7fbc43fa20e2a1a/artifacts/merged_model_sft_for_deployment \
               ~/models/
 
             # 3. Pull la nouvelle image
