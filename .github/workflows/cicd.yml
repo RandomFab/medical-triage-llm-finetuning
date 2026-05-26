@@ -84,32 +84,28 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            # 1. Login GHCR avec le PAT dédié
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io \
-              -u ${{ github.actor }} --password-stdin
+            # 1. Créer le dossier AVANT tout (appartient à fabien_bardouil, pas à root)
+            mkdir -p ~/models/merged_model_sft_for_deployment
 
-            # 2. Télécharger le modèle mergé DPO depuis GCS
-            # Note : le run ID MLflow est fixé au run de merge DPO actuel.
-            # Limitation connue : à mettre à jour si un nouveau merge est effectué.
-            mkdir -p ~/models
+            # 2. Télécharger le modèle depuis GCS (gsutil AVANT docker run)
+            # Commande sur une seule ligne — pas de \ qui traîne
+            gsutil -m cp -r gs://p14-medical-data/mlflow-artifacts/1/22341f87bfd0420ca7fbc43fa20e2a1a/artifacts/merged_model_sft_for_deployment ~/models/
 
-            # chargement du nouveau model sft
-            gsutil -m cp -r \
-              gs://p14-medical-data/mlflow-artifacts/1/22341f87bfd0420ca7fbc43fa20e2a1a/artifacts/merged_model_sft_for_deployment \
-              ~/models/
+            # 3. Login GHCR
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 3. Pull la nouvelle image
+            # 4. Pull la nouvelle image
             docker pull ghcr.io/randomfab/medical-qwen-api:main
 
-            # 4. Arrêter et supprimer l'ancien conteneur
+            # 5. Arrêter et supprimer l'ancien conteneur
             docker stop medical-api || true
             docker rm medical-api || true
 
-            # 5. Lancer le nouveau conteneur avec GPU et modèle monté en volume
+            # 6. Lancer le nouveau conteneur
             docker run -d \
               --name medical-api \
               --gpus all \
               -p 8000:8000 \
-              -v ~/models/merged_model_for_deployment:/app/models/merged_model_for_deployment \
-              -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_for_deployment \
+              -v ~/models/merged_model_sft_for_deployment:/app/models/merged_model_sft_for_deployment \
+              -e GCS_MERGED_MODEL_PATH=/app/models/merged_model_sft_for_deployment \
               ghcr.io/randomfab/medical-qwen-api:main
