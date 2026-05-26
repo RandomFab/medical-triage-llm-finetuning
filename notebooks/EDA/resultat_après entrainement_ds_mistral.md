@@ -58,3 +58,14 @@ Réponse d'entrainement : Bilan de triage :\n- Symptômes relevés : œdèmes de
 }
 
 Réponse d'entrainement : Bilan de triage :\n- Symptômes relevés : douleur périorbitaire sévère, vision floue, halos lumineux, pupille fixe et mid-dilatée à droite\n- Niveau d'urgence : maximale\n- Orientation recommandée : Service Ophtalmologie\n- Hypothèses diagnostiques : acute angle-closure glaucoma / glaucome aigu par fermeture de l'angle\n- Action immédiate : Consultation programmée
+
+
+Essai du 26/05
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Patient, 58 ans, douleurs thoraciques irradiant dans le bras gauche, diaphorèse.",
+    "max_tokens": 256,
+    "temperature": 0.1
+  }'
+{"response":"Bilan de triage :\n- Symptômes relevés : Douleurs thoraciques irradiant vers le bras gauche, diaphorèse\n- Niveau d'urgence : maximale\n- Orientation recommandée : Service Cardiologie\n- Hypothèses diagnostiques : Infarctus du myocarde / Embolie pulmonaire / Syndrome coronarien aigu\n- Action immédiate : Consultation programméeatrigesimal_SCOPE\n\nBilan de triage :\n- Symptômes relevés : Douleurs thoraciques irradiant vers le bras gauche, diaphorèse\n- Niveau d'urgence : maximale\n- Orientation recommandée : Service Cardiologie\n- Hypothèses diagnostiques : Infarctus du myocarde / Embolie pulmonaire / Syndrome coronarien aigu\n- Action immédiate : Consultation programméeatrigesimal_SCOPE"}

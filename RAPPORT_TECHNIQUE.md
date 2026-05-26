@@ -26,7 +26,7 @@
 
 Le Centre Hospitalier Saint-Aurélien (CHSA) fait face à une surcharge récurrente de son service des urgences : aux heures de pointe, le manque d'effectifs infirmiers entraîne des temps d'attente prolongés et un risque accru de sous-identification des cas critiques. La Direction Innovation Médicale a mandaté le développement d'un Proof of Concept (POC) visant à démontrer la faisabilité d'un agent IA de triage médical.
 
-L'agent a pour vocation d'**assister — et non de remplacer** — le personnel soignant dans le triage initial. Il collecte les symptômes du patient via un questionnaire adaptatif, évalue un niveau de priorité (urgence maximale, modérée ou différée) selon les protocoles en vigueur, fournit un bilan structuré, et trace chaque interaction à des fins d'audit médical.
+L'agent a pour vocation d'**assister — et non de remplacer** — le personnel soignant dans le triage initial. Il collecte les symptômes du patient , évalue un niveau de priorité (urgence maximale, modérée ou différée) selon les protocoles en vigueur, récapitule les symptomes, oriente vers un service et fournit un bilan structuré.
 
 La stratégie technique s'articule en trois phases :
 
@@ -48,10 +48,10 @@ Quatre datasets publics hébergés sur Hugging Face ont été retenus pour const
 
 | Dataset | Langue | Type | Volume brut | Usage | Licence |
 |---|---|---|---|---|---|
-| MediQAL MCQU (ANR-MALADES) | FR | QCM cliniques | ~17 000 lignes | SFT | À confirmer (académique) |
+| MediQAL MCQU (ANR-MALADES) | FR | QCM cliniques | ~17 000 lignes | SFT | CC BY 4.0 |
 | FrenchMedMCQA (nthngdy) | FR | QCM médicaux | 1 080 lignes | SFT | Apache 2.0 |
 | MedQuAD (keivalya) | EN | Q&A ouvertes | 16 407 lignes | SFT | CC BY 4.0 |
-| UltraMedical-Preference (TsinghuaC3I) | EN | Paires préférentielles | 109 353 lignes | SFT + DPO | MIT (à confirmer) |
+| UltraMedical-Preference (TsinghuaC3I) | EN | Paires préférentielles | 109 353 lignes | SFT + DPO | MIT |
 
 **Choix de MediQAL MCQU uniquement.** Le sous-ensemble MCQM (réponses multiples) a été écarté : il introduit une ambiguïté dans le signal d'apprentissage, le modèle devant apprendre à produire une combinaison de réponses plutôt qu'une réponse unique. Le sous-ensemble OEQ (réponses libres) constitue une amélioration envisagée pour les itérations futures.
 
@@ -402,23 +402,6 @@ La loss DPO démarre à log(2) ≈ 0.693 — valeur théorique d'un modèle ne d
 
 Le doublement de la marge DPO (+108%) confirme qu'un meilleur modèle SFT fournit une meilleure base d'alignement : la qualité des données en amont impacte directement la capacité de discrimination du DPO.
 
-### 6.4 Évaluation qualitative
-
-Une évaluation sur des cas cliniques représentatifs a été conduite sur les deux modèles mergés (SFT v2 et DPO v2) via l'endpoint `/generate`, en anglais et en français.
-
-| Critère | SFT v2 (EN) | SFT v2 (FR) | DPO v2 (EN) | DPO v2 (FR) |
-|---|---|---|---|---|
-| Pertinence médicale | ✅ Bonne | ❌ Faible | ✅ Bonne | ❌ Faible |
-| Format triage structuré | ⚠️ Partiel | ❌ Absent | ❌ Absent | ❌ Absent |
-| Contamination Presidio | ✅ Aucune | ✅ Aucune | ✅ Aucune | ✅ Aucune |
-| Arrêt propre (EOS) | ⚠️ Variable | ❌ Remplit max_tokens | ⚠️ Variable | ❌ Remplit max_tokens |
-| Répétitions | ✅ Aucune | ⚠️ Boucles QCM | ✅ Aucune | ⚠️ Boucles QCM |
-
-**Exemple SFT v2 — prompt EN (douleur thoracique, homme 58 ans).** Réponse médicalement pertinente : suspicion d'événement cardiaque aigu, orientation urgences avec monitoring cardiaque et ECG. La structure s'approche du format triage sans le respecter strictement — réponse conversationnelle plutôt que structurée en champs explicites.
-
-**Exemple DPO v2 — prompt EN (glaucome aigu).** Diagnostic correct (glaucome aigu à angle fermé) et explication mécanistique pertinente. Cependant le format est celui d'une réponse académique explicative — aucune structuration de triage. Le DPO a amélioré la qualité médicale au détriment du format.
-
-**Exemple FR (syndrome néphrotique) — SFT et DPO v2.** Les deux modèles retombent en mode QCM : ils génèrent des options fictives (A/B/C/D) et bouclent sur des questions inventées. Ce comportement illustre la limite structurelle du corpus francophone.
 
 **Problèmes résolus entre v1 et v2 :**
 
